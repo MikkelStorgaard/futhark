@@ -21,7 +21,7 @@ import           Language.Futhark.Futlib.Prelude
 data StaticVal = Dynamic CompType
                | LambdaSV Pattern Exp Env
                | RecordSV [(Name, StaticVal)]
-               | ArraySV StaticVal
+               | DynamicFun (Exp, StaticVal) StaticVal
   deriving (Show)
 
 -- | Environment mapping variable names to their associated static value.
@@ -64,201 +64,397 @@ lookupVar x = do
 -- | Defunctionalization of an expression. Returns the residual expression and
 -- the associated static value in the defunctionalization monad.
 defuncExp :: Exp -> DefM (Exp, StaticVal)
-defuncExp expr = case expr of
-  Literal{}           -> return (expr, Dynamic $ typeOf expr)
 
-  Parens e loc        -> do (e', sv) <- defuncExp e
-                            return (Parens e' loc, sv)
+defuncExp e@Literal{} =
+  return (e, Dynamic $ typeOf e)
 
-  QualParens qn e loc -> do (e', sv) <- defuncExp e
-                            return (QualParens qn e' loc, sv)
+defuncExp (Parens e loc) = do
+  (e', sv) <- defuncExp e
+  return (Parens e' loc, sv)
 
-  TupLit es loc       -> do (es', svs) <- unzip <$> mapM defuncExp es
-                            return (TupLit es' loc, RecordSV $ zip fields svs)
-    where fields = map (nameFromString . show) [(1 :: Int) ..]
+defuncExp (QualParens qn e loc) = do
+  (e', sv) <- defuncExp e
+  return (QualParens qn e' loc, sv)
 
-  RecordLit fs loc    -> do (fs', names_svs) <- unzip <$> mapM defuncField fs
-                            return (RecordLit fs' loc, RecordSV names_svs)
-    where defuncField (RecordFieldExplicit vn e loc') = do
-            (e', sv) <- defuncExp e
-            return (RecordFieldExplicit vn e' loc', (vn, sv))
-          defuncField (RecordFieldImplicit vn _ loc') = do
-            sv <- lookupVar vn
-            let tp' = typeFromSV sv
-            return (RecordFieldImplicit vn (Info tp') loc', (baseName vn, sv))
+defuncExp (TupLit es loc) = do
+  (es', svs) <- unzip <$> mapM defuncExp es
+  return (TupLit es' loc, RecordSV $ zip fields svs)
+  where fields = map (nameFromString . show) [(1 :: Int) ..]
 
-  ArrayLit es tp loc  -> do (es', svs) <- unzip <$> mapM defuncExp es
-                            case svs of
-                              (sv : _) -> return (ArrayLit es' tp loc, ArraySV sv)
-                              _ -> error "Empty array literal."
+defuncExp (RecordLit fs loc) = do
+  (fs', names_svs) <- unzip <$> mapM defuncField fs
+  return (RecordLit fs' loc, RecordSV names_svs)
 
-  Range{}             -> undefined
-  Empty{}             -> undefined
+  where defuncField (RecordFieldExplicit vn e loc') = do
+          (e', sv) <- defuncExp e
+          return (RecordFieldExplicit vn e' loc', (vn, sv))
+        defuncField (RecordFieldImplicit vn _ loc') = do
+          sv <- lookupVar vn
+          case sv of
+            -- If the implicit field refers to a dynamic function, we
+            -- convert it to an explicit field with a record closing over
+            -- the environment and bind the corresponding static value.
+            DynamicFun (e, sv') _ -> let vn' = baseName vn
+                                     in return (RecordFieldExplicit vn' e loc',
+                                                (vn', sv'))
+            -- The field may refer to a functional expression, so we get the
+            -- type from the static value and not the one from the AST.
+            _ -> let tp = Info $ typeFromSV sv
+                 in return (RecordFieldImplicit vn tp loc', (baseName vn, sv))
 
-  Var qn _ loc        -> do sv <- lookupVar (qualLeaf qn)
-                            let tp' = typeFromSV sv
-                            return (Var qn (Info ([], tp')) loc, sv)
+defuncExp (ArrayLit es t@(Info t') loc) = do
+  es' <- mapM defuncExp' es
+  return (ArrayLit es' t loc, Dynamic t')
 
-  Ascript e0 _ _      -> defuncExp e0
+defuncExp (Range e1 me incl t@(Info t') loc) = do
+  e1' <- defuncExp' e1
+  me' <- mapM defuncExp' me
+  incl' <- mapM defuncExp' incl
+  return (Range e1' me' incl' t loc, Dynamic t')
 
-  LetPat tps pat e1 e2 loc -> do
-    unless (null tps) $
-      error $ "Received a let-binding with type parameters, "
-           ++ "but expected a monomorphic input program."
-    (e1', sv1) <- defuncExp e1
-    let env = matchPatternSV pat sv1
-    (e2', sv2) <- local (env `combineEnv`) $ defuncExp e2
-    return (LetPat tps pat e1' e2' loc, sv2)
+defuncExp e@Empty{} =
+  return (e, Dynamic $ typeOf e)
 
-  LetFun vn (tparams, pats, _, tp, e1) e2 loc -> do
-    unless (null tparams) $
-      error $ "Received a let-bound function with type parameters, "
-           ++ "but expected a monomorphic input program."
-    (e1', sv1) <- defuncExp $ Lambda [] pats e1 Nothing tp noLoc
-    (e2', sv2) <- local (extendEnv vn sv1) $ defuncExp e2
-    let t1 = vacuousShapeAnnotations $ typeOf e1'
-    return (LetPat [] (Id vn (Info t1) noLoc) e1' e2' loc, sv2)
+defuncExp (Var qn _ loc) = do
+  sv <- lookupVar (qualLeaf qn)
+  case sv of
+    -- If the variable refers to a dynamic function, we return its closure
+    -- representation (i.e., a record expression capturing the free variables
+    -- and a 'LambdaSV' static value) instead of the variable itself.
+    DynamicFun closure _ -> return closure
+    _ -> let tp = typeFromSV sv
+         in return (Var qn (Info ([], tp)) loc, sv)
 
-  If e1 e2 e3 tp loc -> do
-    (e1', _ ) <- defuncExp e1
-    (e2', sv) <- defuncExp e2
-    (e3', _ ) <- defuncExp e3
-    return (If e1' e2' e3' tp loc, sv)
+defuncExp (Ascript e0 _ _) = defuncExp e0
 
-  Apply e1 e2 d _ loc -> do
-    (e1', sv1) <- defuncExp e1
-    (e2', sv2) <- defuncExp e2
-    case sv1 of
-      LambdaSV pat e0 env0 -> do
-        let env' = matchPatternSV pat sv2
-        (e0', sv) <- local (const $ combineEnv env' env0) $ defuncExp e0
-        fname <- qualName <$> liftFunDef env0 (typeOf e1') pat sv2 e0'
+defuncExp (LetPat tparams pat e1 e2 loc) = do
+  unless (null tparams) $ error $ expectedMonomorphic "let-binding"
+  (e1', sv1) <- defuncExp e1
+  let env  = matchPatternSV pat sv1
+      pat' = updatePattern pat sv1
+  (e2', sv2) <- local (env `combineEnv`) $ defuncExp e2
+  return (LetPat tparams pat' e1' e2' loc, sv2)
 
-        let t1 = vacuousShapeAnnotations . toStruct $ typeOf e1'
-            t2 = vacuousShapeAnnotations . toStruct $ typeOf e2'
-            rettype = typeOf e0'
-        return (Parens (Apply (Apply (Var fname (Info ([t1, t2], rettype)) loc)
-                               e1' (Info Observe) (Info ([t2], rettype)) loc)
-                        e2' d (Info ([], rettype)) loc) noLoc, sv)
+defuncExp (LetFun vn (tparams, pats, _, rettype, e1) e2 loc) = do
+  unless (null tparams) $ error $ expectedMonomorphic "let-bound function"
+  (pats', e1', sv1) <- defuncLet pats e1 rettype
+  (e2', sv2) <- local (extendEnv vn sv1) $ defuncExp e2
+  case pats' of
+    []  -> let t1 = vacuousShapeAnnotations $ typeOf e1'
+           in return (LetPat [] (Id vn (Info t1) noLoc) e1' e2' loc, sv2)
+    _:_ -> let t1 = vacuousShapeAnnotations . toStruct $ typeOf e1'
+           in return (LetFun vn ([], pats', Nothing, Info t1, e1') e2' loc, sv2)
 
-      _ -> error $ "Application of an expression with static value " ++ show sv1
-                ++ ", but a statically known function was expected."
+defuncExp (If e1 e2 e3 tp loc) = do
+  (e1', _ ) <- defuncExp e1
+  (e2', sv) <- defuncExp e2
+  (e3', _ ) <- defuncExp e3
+  return (If e1' e2' e3' tp loc, sv)
 
-  Negate e0 loc -> do (e0', sv) <- defuncExp e0
-                      return (Negate e0' loc, sv)
+defuncExp e@Apply{} = defuncApply 0 e
 
-  Lambda tparams pats e0 decl tp loc -> do
-    unless (null tparams) $
-      error $ "Received a lambda with type parameters, "
-           ++ "but expected a monomorphic input program."
-    -- Extract the first parameter of the lambda and "push" the
-    -- remaining ones (if there are any) into the body of the lambda.
-    let (pat, e0') = case pats of
-          [] -> error "Received a lambda with no parameters."
-          [pat'] -> (pat', e0)
-          (pat' : pats') -> (pat', Lambda [] pats' e0 decl tp loc)
+defuncExp (Negate e0 loc) = do
+  (e0', sv) <- defuncExp e0
+  return (Negate e0' loc, sv)
 
-    env <- reader $ restrictEnv (freeVars expr)
-    let fields = map (\(vn, sv) -> RecordFieldImplicit vn
-                                   (Info $ typeFromSV sv) noLoc) env
-    return (RecordLit fields loc, LambdaSV pat e0' env)
+defuncExp expr@(Lambda tparams pats e0 decl tp loc) = do
+  unless (null tparams) $ error $ expectedMonomorphic "lambda"
+  -- Extract the first parameter of the lambda and "push" the
+  -- remaining ones (if there are any) into the body of the lambda.
+  let (pat, e0') = case pats of
+        [] -> error "Received a lambda with no parameters."
+        [pat'] -> (pat', e0)
+        (pat' : pats') -> (pat', Lambda [] pats' e0 decl tp loc)
 
-  DoLoop tparams pat e1 form e3 loc -> do
-    unless (null tparams) $
-      error $ "Received a loop with type parameters, "
-           ++ "but expected a monomorphic input program."
-    (e1', sv1) <- defuncExp e1
-    let env1 = matchPatternSV pat sv1
-    (form', env2) <- case form of
-      For ident e2  -> do (e2', sv2) <- defuncExp e2
-                          return (For ident e2', [(identName ident, sv2)])
-      ForIn pat2 e2 -> do (e2', sv2) <- defuncExp e2
-                          return (ForIn pat2 e2', matchPatternSV pat2 sv2)
-      While e2      -> do (e2', _) <- defuncExp e2
-                          return (While e2', [])
-    (e3', sv) <- local ((env1 `combineEnv` env2) `combineEnv`) $ defuncExp e3
-    return (DoLoop tparams pat e1' form' e3' loc, sv)
+  env <- reader $ restrictEnv (freeVars expr)
+  let fields = map (\(vn, sv) -> RecordFieldImplicit vn
+                                 (Info $ typeFromSV sv) noLoc) env
+  return (RecordLit fields loc, LambdaSV pat e0' env)
 
-  BinOp qn (e1, d1) (e2, d2) t@(Info t') loc -> do
-    (e1', _) <- defuncExp e1
-    (e2', _) <- defuncExp e2
-    return (BinOp qn (e1', d1) (e2', d2) t loc, Dynamic t')
+-- We leave the operator section expressions mostly unaffected for now,
+-- assuming that they will only occur as function arguments to SOACs.
+defuncExp e@OpSection{} = return (e, Dynamic $ typeOf e)
 
-  Project vn e0 _ loc -> do
-    (e0', sv0) <- defuncExp e0
-    case sv0 of
-      RecordSV svs -> case lookup vn svs of
-        Just sv -> return (Project vn e0' (Info $ typeFromSV sv) loc, sv)
-        Nothing -> error "Invalid record projection."
-      _ -> error $ "Projection of an expression with static value " ++ show sv0
+defuncExp expr@(OpSectionLeft qn e tps tp loc) = do
+  e' <- defuncExp' e
+  return (OpSectionLeft qn e' tps tp loc, Dynamic $ typeOf expr)
 
-  Index e0 idxs loc -> do (e0', sv0) <- defuncExp e0
-                          idxs' <- mapM defuncDimIndex idxs
-                          case sv0 of
-                            ArraySV sv -> return (Index e0' idxs' loc, sv)
-                            _ -> error $ "Indexing an expression with "
-                                      ++ "static value " ++ show sv0
+defuncExp expr@(OpSectionRight qn e tps tp loc) = do
+  e' <- defuncExp' e
+  return (OpSectionRight qn e' tps tp loc, Dynamic $ typeOf expr)
 
-  Update e1 idxs e2 loc -> do (e1', sv) <- defuncExp e1
-                              idxs' <- mapM defuncDimIndex idxs
-                              (e2', _) <- defuncExp e2
-                              return (Update e1' idxs' e2' loc, sv)
+defuncExp (DoLoop tparams pat e1 form e3 loc) = do
+  unless (null tparams) $ error $ expectedMonomorphic "loop"
+  (e1', sv1) <- defuncExp e1
+  let env1 = matchPatternSV pat sv1
+  (form', env2) <- case form of
+    For ident e2  -> do (e2', sv2) <- defuncExp e2
+                        return (For ident e2', [(identName ident, sv2)])
+    ForIn pat2 e2 -> do (e2', sv2) <- defuncExp e2
+                        return (ForIn pat2 e2', matchPatternSV pat2 sv2)
+    While e2      -> do e2' <- defuncExp' e2
+                        return (While e2', [])
+  (e3', sv) <- local ((env1 `combineEnv` env2) `combineEnv`) $ defuncExp e3
+  return (DoLoop tparams pat e1' form' e3' loc, sv)
 
-  _ -> error $ "defuncExp: unhandled case " ++ pretty expr
+defuncExp (BinOp qn (e1, d1) (e2, d2) t@(Info t') loc) = do
+  e1' <- defuncExp' e1
+  e2' <- defuncExp' e2
+  return (BinOp qn (e1', d1) (e2', d2) t loc, Dynamic t')
 
+defuncExp (Project vn e0 tp@(Info tp') loc) = do
+  (e0', sv0) <- defuncExp e0
+  case sv0 of
+    RecordSV svs -> case lookup vn svs of
+      Just sv -> return (Project vn e0' (Info $ typeFromSV sv) loc, sv)
+      Nothing -> error "Invalid record projection."
+    Dynamic _ -> return (Project vn e0' tp loc, Dynamic tp')
+    _ -> error $ "Projection of an expression with static value " ++ show sv0
+
+defuncExp (LetWith id1 id2 idxs e1 body loc) = do
+  e1' <- defuncExp' e1
+  sv1 <- lookupVar $ identName id2
+  idxs' <- mapM defuncDimIndex idxs
+  (body', sv) <- local (extendEnv (identName id1) sv1) $ defuncExp body
+  return (LetWith id1 id2 idxs' e1' body' loc, sv)
+
+defuncExp expr@(Index e0 idxs loc) = do
+  e0' <- defuncExp' e0
+  idxs' <- mapM defuncDimIndex idxs
+  return (Index e0' idxs' loc, Dynamic $ typeOf expr)
+
+defuncExp (Update e1 idxs e2 loc) = do
+  (e1', sv) <- defuncExp e1
+  idxs' <- mapM defuncDimIndex idxs
+  e2' <- defuncExp' e2
+  return (Update e1' idxs' e2' loc, sv)
+
+defuncExp e@(Concat i e1 es loc) = do
+  e1' <- defuncExp' e1
+  es' <- mapM defuncExp' es
+  return (Concat i e1' es' loc, Dynamic $ typeOf e)
+
+defuncExp e@(Reshape e1 e2 loc) = do
+  e1' <- defuncExp' e1
+  e2' <- defuncExp' e2
+  return (Reshape e1' e2' loc, Dynamic $ typeOf e)
+
+defuncExp e@(Rearrange is e0 loc) = do
+  e0' <- defuncExp' e0
+  return (Rearrange is e0' loc, Dynamic $ typeOf e)
+
+defuncExp e@(Rotate i e1 e2 loc) = do
+  e1' <- defuncExp' e1
+  e2' <- defuncExp' e2
+  return (Rotate i e1' e2' loc, Dynamic $ typeOf e)
+
+defuncExp expr@(Map e1 es tp loc) = do
+  e1' <- defuncSoacExp e1
+  es' <- mapM defuncExp' es
+  return (Map e1' es' tp loc, Dynamic $ typeOf expr)
+
+defuncExp Reduce{}    = undefined
+defuncExp Scan{}      = undefined
+defuncExp Filter{}    = undefined
+defuncExp Partition{} = undefined
+defuncExp Stream{}    = undefined
+
+defuncExp e@(Zip i e1 es tp uniq loc) = do
+  e1' <- defuncExp' e1
+  es' <- mapM defuncExp' es
+  return (Zip i e1' es' tp uniq loc, Dynamic $ typeOf e)
+
+defuncExp e@(Unzip e0 tps loc) = do
+  e0' <- defuncExp' e0
+  return (Unzip e0' tps loc, Dynamic $ typeOf e)
+
+defuncExp (Unsafe e1 loc) = do
+  (e1', sv) <- defuncExp e1
+  return (Unsafe e1' loc, sv)
+
+-- | Same as 'defuncExp', except it ignores the static value.
+defuncExp' :: Exp -> DefM Exp
+defuncExp' = fmap fst . defuncExp
+
+-- | Defunctionalize the function argument to a SOAC by eta-expanding if
+-- necessary and then defunctionalizing the body of the introduced lambda.
+defuncSoacExp :: Exp -> DefM Exp
+defuncSoacExp e = do
+  (pats, body, tp) <- etaExpand e
+  let env = foldMap envFromPattern pats
+  body' <- local (env `combineEnv`) $ defuncExp' body
+  return $ Lambda [] pats body' Nothing (Info tp) noLoc
+
+etaExpand :: Exp -> DefM ([Pattern], Exp, StructType)
+etaExpand e = do
+  let (ps, ret) = getType $ typeOf e
+  (pats, vars) <- fmap unzip . forM ps $ \t -> do
+    x <- newNameFromString "x"
+    return (Id x (Info $ vacuousShapeAnnotations t) noLoc,
+            Var (qualName x) (Info ([], t)) noLoc)
+  let ps_st = map (vacuousShapeAnnotations . toStruct) ps
+      e' = foldl (\e1 (e2, t2, argtypes) ->
+                    Apply e1 e2 (Info $ diet t2)
+                    (Info (argtypes, ret)) noLoc)
+           e $ zip3 vars ps (drop 1 $ tails ps_st)
+  return (pats, e', vacuousShapeAnnotations $ toStruct ret)
+
+  where getType (Arrow _ _ t1 t2) =
+          let (ps, r) = getType t2 in (t1 : ps, r)
+        getType t = ([], t)
 
 -- | Defunctionalize an indexing of a single array dimension.
 defuncDimIndex :: DimIndexBase Info VName -> DefM (DimIndexBase Info VName)
 defuncDimIndex (DimFix e1) = DimFix . fst <$> defuncExp e1
 defuncDimIndex (DimSlice me1 me2 me3) =
   DimSlice <$> defunc' me1 <*> defunc' me2 <*> defunc' me3
-    where defunc' Nothing  = return Nothing
-          defunc' (Just e) = Just . fst <$> defuncExp e
+  where defunc' = mapM defuncExp'
 
--- | Lift a function to a top-level declaration.
-liftFunDef :: Env -> CompType -> Pattern -> StaticVal -> Exp -> DefM VName
-liftFunDef closure_env env_type pat pat_sv body = do
-  fname <- newNameFromString "lifted"
-  let params = [ buildEnvPattern closure_env env_type
-               , updatePattern pat pat_sv ]
-      rettype = vacuousShapeAnnotations $ toStruct $ typeOf body
-      dec = ValDec ValBind
-        { valBindEntryPoint = False
-        , valBindName       = fname
-        , valBindRetDecl    = Nothing
-        , valBindRetType    = Info rettype
-        , valBindTypeParams = []
-        , valBindParams     = params
-        , valBindBody       = body
-        , valBindDoc        = Nothing
-        , valBindLocation   = noLoc
-        }
-  tell [dec]
-  return fname
+-- | Defunctionalize a let-bound function, while preserving parameters
+-- that have order 0 types (i.e., non-functional).
+defuncLet :: [Pattern] -> Exp -> Info StructType -> DefM ([Pattern], Exp, StaticVal)
+defuncLet ps@(pat:pats) body rettype
+  | patternOrder pat == 0 = do
+      let env = envFromPattern pat
+      (pats', body', sv) <- local (env `combineEnv`) $
+                            defuncLet pats body rettype
+      closure <- defuncExp $ Lambda [] ps body Nothing rettype noLoc
+      return (pat : pats', body', DynamicFun closure sv)
+  | otherwise = do
+      (e, sv) <- defuncExp $ Lambda [] ps body Nothing rettype noLoc
+      return ([], e, sv)
+defuncLet [] body _ = do
+  (body', sv) <- defuncExp body
+  return ([], body', sv)
 
--- | Given a closed over environment and the type of the record argument
--- containing the values for that environment, constructs a record pattern
--- that binds the closed over variables.
-buildEnvPattern :: Env -> CompType -> Pattern
-buildEnvPattern env (Record fs) = RecordPattern (map buildField env) noLoc
-  where buildField (vn, _) =
-          let vn' = baseName vn
-          in case M.lookup vn' fs of
-               Just t -> (vn', Id vn (Info $ vacuousShapeAnnotations t) noLoc)
-               Nothing -> error $ "Variable " ++ pretty vn'
-                               ++ " occurs in closed over environment, but"
-                               ++ " it is missing from the environment record."
-buildEnvPattern _ tp =
-  error $ "Expected a record type for constructing the "
-       ++ "environment pattern, but received type: " ++ pretty tp
+-- | Defunctionalize an application expression at a given depth of application.
+-- Calls to dynamic (first-order) functions are preserved at much as possible,
+-- but a new lifted function is created if a dynamic function is only partially
+-- applied.
+defuncApply :: Int -> Exp -> DefM (Exp, StaticVal)
+defuncApply depth (Apply e1 e2 d tp loc) = do
+  (e1', sv1) <- defuncApply (depth+1) e1
+  (e2', sv2) <- defuncExp e2
+  case sv1 of
+    LambdaSV pat e0 closure_env -> do
+      let env' = matchPatternSV pat sv2
+      (e0', sv) <- local (const $ combineEnv env' closure_env) $ defuncExp e0
+
+      -- Lift lambda to top-level function definition.
+      fname <- newNameFromString "lifted"
+      let params = [ buildEnvPattern closure_env
+                   , updatePattern pat sv2 ]
+          rettype = typeOf e0'
+      liftValDec fname rettype params e0'
+
+      let t1 = vacuousShapeAnnotations . toStruct $ typeOf e1'
+          t2 = vacuousShapeAnnotations . toStruct $ typeOf e2'
+          fname' = qualName fname
+      return (Parens (Apply (Apply (Var fname' (Info ([t1, t2], rettype)) loc)
+                             e1' (Info Observe) (Info ([t2], rettype)) loc)
+                      e2' d (Info ([], rettype)) loc) noLoc, sv)
+
+    -- If e1 is a dynamic function, we just leave the application in place.
+    DynamicFun _ sv -> return (Apply e1' e2' d tp loc, sv)
+
+    _ -> error $ "Application of an expression that is neither a static lambda "
+              ++ "nor a dynamic function, but has static value: " ++ show sv1
+
+defuncApply depth expr@(Var qn {- tp -} _ loc) = do
+    sv <- lookupVar (qualLeaf qn)
+    case sv of
+      DynamicFun _ _
+        | not (fullyApplied sv depth) -> do
+            fname <- newName $ qualLeaf qn
+            let (pats, e0, sv') = liftDynFun sv depth
+                rettype = typeFromSV sv'
+                -- rettype_st = vacuousShapeAnnotations $ toStruct rettype
+            liftValDec fname rettype pats e0
+            return (Var (qualName fname) (Info ([], rettype)) loc,
+                    replNthDynFun sv sv' depth)
+      _ -> return (expr, sv)
+
+defuncApply _ expr = defuncExp expr
+
+-- | Replace the n'th StaticVal in a sequence of DynamicFun's.
+replNthDynFun :: StaticVal -> StaticVal -> Int -> StaticVal
+replNthDynFun _ sv' 0 = sv'
+replNthDynFun (DynamicFun clsr sv) sv' d =
+  DynamicFun clsr $ replNthDynFun sv sv' (d-1)
+replNthDynFun sv _ n = error $ "Tried to replace the " ++ show n
+                             ++ "'th StaticVal in " ++ show sv
+
+-- | Check if a 'StaticVal' and a given application depth corresponds
+-- to a fully applied dynamic function.
+fullyApplied :: StaticVal -> Int -> Bool
+fullyApplied Dynamic{}         0         = True
+fullyApplied LambdaSV{}        _         = True
+fullyApplied (DynamicFun _ sv) d | d > 0 = fullyApplied sv (d-1)
+fullyApplied _ _                         = False
+
+-- | Converts a dynamic function 'StaticVal' into a list of parameters,
+-- a function body, and the static value that results from applying the
+-- function at the given depth of partial application.
+liftDynFun :: StaticVal -> Int -> ([Pattern], Exp, StaticVal)
+liftDynFun (DynamicFun (e, sv) _) 0 = ([], e, sv)
+liftDynFun (DynamicFun (_, LambdaSV pat _ _) sv) d
+  | d > 0 =  let (pats, e', sv') = liftDynFun sv (d-1)
+             in (pat : pats, e', sv')
+liftDynFun sv _ = error $ "Tried to lift a StaticVal " ++ show sv
+                       ++ ", but expected a dynamic function."
+
+-- | Compute the maximum order of a type that occurs in a given pattern.
+patternOrder :: Pattern -> Int
+patternOrder pat = case pat of
+  TuplePattern ps _     -> foldl' max 0 $ map patternOrder ps
+  RecordPattern fs _    -> foldl' max 0 $ map (patternOrder . snd) fs
+  PatternParens p _     -> patternOrder p
+  Id _ (Info t) _       -> order t
+  Wildcard (Info t) _   -> order t
+  PatternAscription p _ -> patternOrder p
+
+-- | Converts a pattern to an environment that binds the individual names of the
+-- pattern to their corresponding types wrapped in a 'Dynamic' static value.
+envFromPattern :: Pattern -> Env
+envFromPattern pat = case pat of
+  TuplePattern ps _     -> foldMap envFromPattern ps
+  RecordPattern fs _    -> foldMap (envFromPattern . snd) fs
+  PatternParens p _     -> envFromPattern p
+  Id vn (Info t) _      -> [(vn, Dynamic $ removeShapeAnnotations t)]
+  Wildcard _ _          -> mempty
+  PatternAscription p _ -> envFromPattern p
+
+-- | Create a new top-level value declaration with the given function name,
+-- return type, list of parameters, and body expression.
+liftValDec :: VName -> CompType -> [Pattern] -> Exp -> DefM ()
+liftValDec fname rettype pats body = tell [dec]
+  where rettype_st = vacuousShapeAnnotations $ toStruct rettype
+        dec = ValDec ValBind
+          { valBindEntryPoint = False
+          , valBindName       = fname
+          , valBindRetDecl    = Nothing
+          , valBindRetType    = Info rettype_st
+          , valBindTypeParams = []
+          , valBindParams     = pats
+          , valBindBody       = body
+          , valBindDoc        = Nothing
+          , valBindLocation   = noLoc
+          }
+
+-- | Given a closure environment, construct a record pattern that
+-- binds the closed over variables.
+buildEnvPattern :: Env -> Pattern
+buildEnvPattern env = RecordPattern (map buildField env) noLoc
+  where buildField (vn, sv) = let tp = vacuousShapeAnnotations $ typeFromSV sv
+                              in (baseName vn, Id vn (Info tp) noLoc)
 
 -- | Compute the corresponding type for a given static value.
 typeFromSV :: StaticVal -> CompType
-typeFromSV (Dynamic tp)       = tp
-typeFromSV (LambdaSV _ _ env) = typeFromEnv env
-typeFromSV (RecordSV ls)      = Record . M.fromList $
-                                map (\(vn, sv) -> (vn, typeFromSV sv)) ls
-typeFromSV sv = error $ "typeFromSV: missing case for static value " ++ show sv
+typeFromSV (Dynamic tp)           = tp
+typeFromSV (LambdaSV _ _ env)     = typeFromEnv env
+typeFromSV (RecordSV ls)          = Record . M.fromList $
+                                    map (\(vn, sv) -> (vn, typeFromSV sv)) ls
+typeFromSV (DynamicFun (_, sv) _) = typeFromSV sv
 
 typeFromEnv :: Env -> CompType
 typeFromEnv = Record . M.fromList .
@@ -268,28 +464,29 @@ typeFromEnv = Record . M.fromList .
 -- the identifier components of the pattern mapped to the corresponding
 -- subcomponents of the static value.
 matchPatternSV :: PatternBase f VName -> StaticVal -> Env
-matchPatternSV pat@(RecordPattern ps _) sv@(RecordSV ls) =
-  let ps' = sortOn fst ps
-      ls' = sortOn fst ls
-  in if map fst ps' == map fst ls'
-     then concat $ zipWith (\(_, p) (_, sv') -> matchPatternSV p sv')
-                           ps' ls'
-     else error $ "Record pattern " ++ pretty pat
-                ++ "did not match record static value " ++ show sv
+matchPatternSV (TuplePattern ps _) (RecordSV ls) =
+  concat $ zipWith (\p (_, sv) -> matchPatternSV p sv) ps ls
+matchPatternSV (RecordPattern ps _) (RecordSV ls)
+  | ps' <- sortOn fst ps, ls' <- sortOn fst ls,
+    map fst ps' == map fst ls' =
+      concat $ zipWith (\(_, p) (_, sv) -> matchPatternSV p sv) ps' ls'
 matchPatternSV (PatternParens pat _) sv = matchPatternSV pat sv
 matchPatternSV (Id vn _ _) sv = [(vn, sv)]
 matchPatternSV (Wildcard _ _) _ = []
 matchPatternSV (PatternAscription pat _) sv = matchPatternSV pat sv
+matchPatternSV pat (Dynamic t) = matchPatternSV pat $ svFromType t
 matchPatternSV pat sv = error $ "Tried to match pattern " ++ pretty pat
-                             ++ "with static value " ++ show sv ++ "."
+                             ++ " with static value " ++ show sv ++ "."
 
 -- | Given a pattern and the static value for the defunctionalized argument,
 -- update the pattern to reflect the changes in the types.
 updatePattern :: Pattern -> StaticVal -> Pattern
 updatePattern (TuplePattern ps loc) (RecordSV svs) =
   TuplePattern (zipWith updatePattern ps $ map snd svs) loc
-updatePattern (RecordPattern ps loc) (RecordSV svs)  =
-  RecordPattern (zipWith (\(n, p) (_, sv) -> (n, updatePattern p sv)) ps svs) loc
+updatePattern (RecordPattern ps loc) (RecordSV svs)
+  | ps' <- sortOn fst ps, svs' <- sortOn fst svs =
+      RecordPattern (zipWith (\(n, p) (_, sv) ->
+                                (n, updatePattern p sv)) ps' svs') loc
 updatePattern (PatternParens pat loc) sv =
   PatternParens (updatePattern pat sv) loc
 updatePattern (Id vn _ loc) sv =
@@ -298,9 +495,16 @@ updatePattern (Wildcard _ loc) sv =
   Wildcard (Info . vacuousShapeAnnotations $ typeFromSV sv) loc
 updatePattern (PatternAscription pat _) sv =
   updatePattern pat sv
+updatePattern pat (Dynamic t) = updatePattern pat (svFromType t)
 updatePattern pat sv =
   error $ "Tried to update pattern " ++ pretty pat
        ++ "to reflect the static value " ++ show sv
+
+-- | Convert a record (or tuple) type to a record static value. This is used for
+-- "unwrapping" tuples and records that are nested in 'Dynamic' static values.
+svFromType :: CompType -> StaticVal
+svFromType (Record fs) = RecordSV . M.toList $ M.map svFromType fs
+svFromType t           = Dynamic t
 
 -- | Compute the set of free variables of an expression.
 freeVars :: Exp -> Names
@@ -348,22 +552,24 @@ patternVars (Id vn _ _)               = S.singleton vn
 patternVars (Wildcard _ _)            = S.empty
 patternVars (PatternAscription pat _) = patternVars pat
 
+expectedMonomorphic :: String -> String
+expectedMonomorphic msg =
+  "Received a " ++ msg ++ " with type parameters, but the \
+  \defunctionalizer expects a monomorphic input program."
+
 -- | Defunctionalize a top-level value binding. Returns the transformed result
 -- as well as a function that extends the environment with a binding form the
 -- bound name to the static value of the transformed body.
 defuncValBind :: ValBind -> DefM (ValBind, Env -> Env)
 defuncValBind valbind@(ValBind _ name _ rettype tparams params body _ _) = do
   unless (null tparams) $
-    error $ "Received a top-level value declaration with type parameters, "
-         ++ "but the defunctionalizer expects a monomorphic input program."
-  let body' | null params = body
-            | otherwise   = Lambda [] params body Nothing rettype noLoc
-  (body'', sv) <- defuncExp body'
-  let rettype' = vacuousShapeAnnotations . toStruct $ typeOf body''
+    error $ expectedMonomorphic "top-level value declaration"
+  (params', body', sv) <- defuncLet params body rettype
+  let rettype' = vacuousShapeAnnotations . toStruct $ typeOf body'
   return ( valbind { valBindRetDecl = Nothing
                    , valBindRetType = Info rettype'
-                   , valBindParams  = []
-                   , valBindBody    = body''
+                   , valBindParams  = params'
+                   , valBindBody    = body'
                    }
          , extendEnv name sv)
 
