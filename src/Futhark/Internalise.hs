@@ -37,6 +37,7 @@ import Futhark.Internalise.TypesValues
 import Futhark.Internalise.Bindings
 import Futhark.Internalise.Lambdas
 import Futhark.Internalise.Modules as Modules
+import Futhark.Internalise.Defunctionaliser as Defunctionaliser
 import Futhark.Util (dropAt)
 
 -- | Convert a program in source Futhark to a program in the Futhark
@@ -45,7 +46,8 @@ internaliseProg :: MonadFreshNames m =>
                    E.Imports -> m (Either String I.Prog)
 internaliseProg prog = do
   prog_decs <- Modules.transformProg prog
-  prog' <- fmap (fmap I.Prog) $ runInternaliseM $ internaliseDecs prog_decs
+  prog_decs' <- Defunctionaliser.transformProg prog_decs
+  prog' <- fmap (fmap I.Prog) $ runInternaliseM $ internaliseDecs prog_decs'
   traverse I.renameProg prog'
 
 internaliseDecs :: [E.Dec] -> InternaliseM ()

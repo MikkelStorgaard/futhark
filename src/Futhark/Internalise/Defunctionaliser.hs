@@ -1,20 +1,15 @@
-{-# OPTIONS_GHC -Wall #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 -- | Defunctionalization of typed, monomorphic Futhark programs without modules.
-module Main where
+module Futhark.Internalise.Defunctionaliser (transformProg) where
 
 import           Control.Monad.RWS
 import           Data.List
 import           Data.Loc
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
-import           System.Environment (getArgs)
 
-import           Futhark.Compiler
 import           Futhark.MonadFreshNames
-import           Futhark.Pipeline
 import           Language.Futhark
-import           Language.Futhark.Futlib.Prelude
 
 -- | A static value stores additional information about the result of
 -- defunctionalization of an expression, aside from the residual expression.
@@ -589,15 +584,3 @@ transformProg :: MonadFreshNames m => [Dec] -> m [Dec]
 transformProg decs = modifyNameSource $ \namesrc ->
   let (decs', namesrc', liftedDecs) = runDefM namesrc $ defuncDecs decs
   in (liftedDecs ++ decs', namesrc')
-
-
-main :: IO ()
-main = do
-  [fp] <- getArgs
-  let prelude = preludeBasis  -- or emptyBasis for smaller program.
-  (_, (_, fileMod):_, namesrc) <-
-    either (error . show) return =<<
-    runFutharkM (readProgram False prelude mempty fp) False
-  let decs = progDecs $ fileProg fileMod
-      (decs', _, liftedDecs) = runDefM namesrc $ defuncDecs decs
-  mapM_ (putStrLn . pretty) (liftedDecs ++ decs')
