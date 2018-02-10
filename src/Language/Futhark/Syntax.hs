@@ -114,6 +114,7 @@ class (Show vn,
        Show (f [TypeBase () ()]),
        Show (f StructType),
        Show (f ([StructType], CompType)),
+       Show (f ([TypeBase () ()], [StructType], CompType)),
        Show (f (M.Map VName VName)),
        Show (f [RecordArrayElemTypeBase () Names]),
        Show (f Uniqueness),
@@ -561,9 +562,11 @@ data ExpBase f vn =
 
             | Empty (TypeDeclBase f vn) (f CompType) SrcLoc
 
-            | Var    (QualName vn) (f ([StructType], CompType)) SrcLoc
-            -- ^ The @[StructType]@ list indicates the type of any
-            -- remaining parameters, if this is the name of a function.
+            | Var (QualName vn) (f ([TypeBase () ()], [StructType], CompType)) SrcLoc
+            -- ^ The @[TypeBase () ()]@ list is the instantiation list, which
+            -- contains the instantiated types for any type parameters. The
+            -- @[StructType]@ list indicates the type of any remaining
+            -- parameters, if this is the name of a function.
 
             | Ascript (ExpBase f vn) (TypeDeclBase f vn) SrcLoc
             -- ^ Type ascription: @e : t@.

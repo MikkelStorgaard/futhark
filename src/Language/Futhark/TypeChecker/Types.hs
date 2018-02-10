@@ -67,6 +67,8 @@ unifyTypesU uf (Record ts1) (Record ts2)
     sort (M.keys ts1) == sort (M.keys ts2) =
       Record <$> traverse (uncurry (unifyTypesU uf))
       (M.intersectionWith (,) ts1 ts2)
+unifyTypesU uf (Arrow as1 mn1 t1 t1') (Arrow as2 _ t2 t2') =
+  Arrow (as1 <> as2) mn1 <$> unifyTypesU uf t1 t2 <*> unifyTypesU uf t1' t2'
 unifyTypesU _ _ _ = Nothing
 
 unifyTypeArgs :: (Monoid als, Eq als, ArrayDim dim) =>
@@ -248,7 +250,7 @@ checkTypeExp ote@TEApply{} = do
 checkNamedDim :: MonadTypeChecker m =>
                  SrcLoc -> QualName Name -> m (QualName VName)
 checkNamedDim loc v = do
-  (v', t) <- lookupVar loc v
+  (v', _, t) <- lookupVar loc v
   case t of
     Prim (Signed Int32) -> return v'
     _                   -> throwError $ DimensionNotInteger loc v

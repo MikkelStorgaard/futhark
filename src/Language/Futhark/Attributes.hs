@@ -417,8 +417,7 @@ typeOf (Empty _ (Info t) _) = t
 typeOf (BinOp _ _ _ (Info t) _) = t
 typeOf (Project _ _ (Info t) _) = t
 typeOf (If _ _ _ (Info t) _) = t
-typeOf (Var _ (Info (_, Record ets)) _) = Record ets
-typeOf (Var qn (Info (ts, ret)) _) =
+typeOf (Var qn (Info (_, ts, ret)) _) =
   foldr (Arrow mempty Nothing . removeShapeAnnotations . fromStruct) ret ts
   `addAliases` S.insert (qualLeaf qn)
 typeOf (Ascript e _ _) = typeOf e
@@ -603,7 +602,7 @@ namesToPrimTypes = M.fromList
 -- or overloaded.  An overloaded builtin is a mapping from valid
 -- parameter types to the result type.
 data Intrinsic = IntrinsicMonoFun [PrimType] PrimType
-               | IntrinsicOverloadedFun [([PrimType], PrimType)]
+               | IntrinsicOverloadedFun [(PrimType, ([PrimType], PrimType))]
                | IntrinsicPolyFun [TypeParamBase VName] [TypeBase () ()] (TypeBase () ())
                | IntrinsicType PrimType
                | IntrinsicEquality -- Special cased.
@@ -616,8 +615,8 @@ intrinsics = M.fromList $ zipWith namify [10..] $
              map primFun (M.toList Primitive.primFuns) ++
 
              [ ("~", IntrinsicOverloadedFun $
-                     [([Signed t], Signed t) | t <- [minBound..maxBound] ] ++
-                     [([Unsigned t], Unsigned t) | t <- [minBound..maxBound] ])
+                     [(Signed t, ([Signed t], Signed t)) | t <- [minBound..maxBound] ] ++
+                     [(Unsigned t, ([Unsigned t], Unsigned t)) | t <- [minBound..maxBound] ])
              , ("!", IntrinsicMonoFun [Bool] Bool)] ++
 
              [("opaque", IntrinsicOpaque)] ++
@@ -691,7 +690,7 @@ intrinsics = M.fromList $ zipWith namify [10..] $
         mkIntrinsicBinOp op = (pretty op, intrinsicBinOp op)
 
         binOp :: [PrimType] -> Intrinsic
-        binOp ts = IntrinsicOverloadedFun [ ([t,t], t) | t <- ts ]
+        binOp ts = IntrinsicOverloadedFun [ (t, ([t,t], t)) | t <- ts ]
 
         intrinsicBinOp Plus     = binOp anyNumberType
         intrinsicBinOp Minus    = binOp anyNumberType
@@ -716,7 +715,7 @@ intrinsics = M.fromList $ zipWith namify [10..] $
         intrinsicBinOp Greater  = ordering
         intrinsicBinOp Geq      = ordering
 
-        ordering = IntrinsicOverloadedFun [ ([t,t], Bool) | t <- anyPrimType ]
+        ordering = IntrinsicOverloadedFun [ (t, ([t,t], Bool)) | t <- anyPrimType ]
 
 -- | The largest tag used by an intrinsic - this can be used to
 -- determine whether a 'VName' refers to an intrinsic or a user-defined name.
