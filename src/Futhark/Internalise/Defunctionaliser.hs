@@ -1,6 +1,10 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 -- | Defunctionalization of typed, monomorphic Futhark programs without modules.
-module Futhark.Internalise.Defunctionaliser (transformProg) where
+module Futhark.Internalise.Defunctionaliser
+  ( transformProg
+  , runDefM
+  , defuncDecs
+  ) where
 
 import           Control.Monad.RWS
 import           Data.List
@@ -118,7 +122,7 @@ defuncExp (Var qn _ loc) = do
     -- and a 'LambdaSV' static value) instead of the variable itself.
     DynamicFun closure _ -> return closure
     _ -> let tp = typeFromSV sv
-         in return (Var qn (Info ([], tp)) loc, sv)
+         in return (Var qn (Info ([], [], tp)) loc, sv)
 
 defuncExp (Ascript e0 _ _) = defuncExp e0
 
@@ -286,7 +290,7 @@ etaExpand e = do
   (pats, vars) <- fmap unzip . forM ps $ \t -> do
     x <- newNameFromString "x"
     return (Id x (Info $ vacuousShapeAnnotations t) noLoc,
-            Var (qualName x) (Info ([], t)) noLoc)
+            Var (qualName x) (Info ([], [], t)) noLoc)
   let ps_st = map (vacuousShapeAnnotations . toStruct) ps
       e' = foldl (\e1 (e2, t2, argtypes) ->
                     Apply e1 e2 (Info $ diet t2)
@@ -327,7 +331,7 @@ defuncLet [] body _ = do
 -- but a new lifted function is created if a dynamic function is only partially
 -- applied.
 defuncApply :: Int -> Exp -> DefM (Exp, StaticVal)
-defuncApply depth (Apply e1 e2 d tp loc) = do
+defuncApply depth (Apply e1 e2 d (Info (argtypes, _)) loc) = do
   (e1', sv1) <- defuncApply (depth+1) e1
   (e2', sv2) <- defuncExp e2
   case sv1 of
@@ -345,37 +349,47 @@ defuncApply depth (Apply e1 e2 d tp loc) = do
       let t1 = vacuousShapeAnnotations . toStruct $ typeOf e1'
           t2 = vacuousShapeAnnotations . toStruct $ typeOf e2'
           fname' = qualName fname
-      return (Parens (Apply (Apply (Var fname' (Info ([t1, t2], rettype)) loc)
+      return (Parens (Apply (Apply (Var fname' (Info ([], [t1, t2], rettype)) loc)
                              e1' (Info Observe) (Info ([t2], rettype)) loc)
                       e2' d (Info ([], rettype)) loc) noLoc, sv)
 
-    -- If e1 is a dynamic function, we just leave the application in place.
-    DynamicFun _ sv -> return (Apply e1' e2' d tp loc, sv)
+    -- If e1 is a dynamic function, we just leave the application in place,
+    -- but we update the types since it may be partially applied or return
+    -- a higher-order term.
+    DynamicFun _ sv ->
+      let (argtypes', rettype) = dynamicFunType sv argtypes
+      in return (Apply e1' e2' d (Info (argtypes', rettype)) loc, sv)
 
     _ -> error $ "Application of an expression that is neither a static lambda "
               ++ "nor a dynamic function, but has static value: " ++ show sv1
 
-defuncApply depth expr@(Var qn {- tp -} _ loc) = do
+defuncApply depth (Var qn (Info (_, argtypes, _)) loc) = do
     sv <- lookupVar (qualLeaf qn)
     case sv of
       DynamicFun _ _
-        | not (fullyApplied sv depth) -> do
+        | fullyApplied sv depth ->
+            -- We still need to update the types in case the dynamic
+            -- function returns a higher-order term.
+            let (argtypes', rettype) = dynamicFunType sv argtypes
+            in return (Var qn (Info ([], argtypes', rettype)) loc, sv)
+
+        | otherwise -> do
             fname <- newName $ qualLeaf qn
             let (pats, e0, sv') = liftDynFun sv depth
-                rettype = typeFromSV sv'
-                -- rettype_st = vacuousShapeAnnotations $ toStruct rettype
+                sv'' = replNthDynFun sv sv' depth
+                (argtypes', rettype) = dynamicFunType sv'' argtypes
             liftValDec fname rettype pats e0
-            return (Var (qualName fname) (Info ([], rettype)) loc,
-                    replNthDynFun sv sv' depth)
-      _ -> return (expr, sv)
+            return (Var (qualName fname) (Info ([], argtypes', rettype)) loc, sv'')
+
+      _ -> return (Var qn (Info ([], [], typeFromSV sv)) loc, sv)
 
 defuncApply _ expr = defuncExp expr
 
 -- | Replace the n'th StaticVal in a sequence of DynamicFun's.
 replNthDynFun :: StaticVal -> StaticVal -> Int -> StaticVal
 replNthDynFun _ sv' 0 = sv'
-replNthDynFun (DynamicFun clsr sv) sv' d =
-  DynamicFun clsr $ replNthDynFun sv sv' (d-1)
+replNthDynFun (DynamicFun clsr sv) sv' d
+  | d > 0 = DynamicFun clsr $ replNthDynFun sv sv' (d-1)
 replNthDynFun sv _ n = error $ "Tried to replace the " ++ show n
                              ++ "'th StaticVal in " ++ show sv
 
@@ -454,6 +468,13 @@ typeFromSV (DynamicFun (_, sv) _) = typeFromSV sv
 typeFromEnv :: Env -> CompType
 typeFromEnv = Record . M.fromList .
               map (\(vn, sv) -> (baseName vn, typeFromSV sv))
+
+-- | Construct the type for a fully-applied dynamic function from its
+-- static value and the original types of its arguments.
+dynamicFunType :: StaticVal -> [StructType] -> ([StructType], CompType)
+dynamicFunType (DynamicFun _ sv) (p:ps) =
+  let (ps', ret) = dynamicFunType sv ps in (p : ps', ret)
+dynamicFunType sv _ = ([], typeFromSV sv)
 
 -- | Match a pattern with its static value. Returns an environment with
 -- the identifier components of the pattern mapped to the corresponding
