@@ -412,16 +412,6 @@ liftDynFun (DynamicFun (_, LambdaSV pat _ _) sv) d
 liftDynFun sv _ = error $ "Tried to lift a StaticVal " ++ show sv
                        ++ ", but expected a dynamic function."
 
--- | Compute the maximum order of a type that occurs in a given pattern.
-patternOrder :: Pattern -> Int
-patternOrder pat = case pat of
-  TuplePattern ps _     -> foldl' max 0 $ map patternOrder ps
-  RecordPattern fs _    -> foldl' max 0 $ map (patternOrder . snd) fs
-  PatternParens p _     -> patternOrder p
-  Id _ (Info t) _       -> order t
-  Wildcard (Info t) _   -> order t
-  PatternAscription p _ -> patternOrder p
-
 -- | Converts a pattern to an environment that binds the individual names of the
 -- pattern to their corresponding types wrapped in a 'Dynamic' static value.
 envFromPattern :: Pattern -> Env

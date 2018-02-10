@@ -465,6 +465,9 @@ checkValBind (ValBind entry fname maybe_tdecl NoInfo tparams params body doc loc
   when (entry && any isTypeParam tparams) $
     throwError $ TypeError loc "Entry point functions may not be polymorphic."
 
+  when (entry && (any ((/= 0) . patternOrder) params' || order rettype /= 0)) $
+    throwError $ TypeError loc "Entry point functions may not be higher-order."
+
   return (mempty { envVtable =
                      M.singleton fname' $
                      BoundV tparams' $ foldr (uncurry (Arrow ()) . patternParam) rettype params'

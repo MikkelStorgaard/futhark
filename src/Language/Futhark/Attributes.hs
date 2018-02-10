@@ -27,6 +27,7 @@ module Language.Futhark.Attributes
   , patternStructType
   , patternParam
   , patternNoShapeAnnotations
+  , patternOrder
 
   -- * Queries on types
   , uniqueness
@@ -587,6 +588,16 @@ patternNoShapeAnnotations (RecordPattern ps loc) =
   RecordPattern (map (fmap patternNoShapeAnnotations) ps) loc
 patternNoShapeAnnotations (Wildcard (Info t) loc) =
   Wildcard (Info (vacuousShapeAnnotations t)) loc
+
+-- | Compute the maximum order of a type that occurs in a given pattern.
+patternOrder :: PatternBase Info vn -> Int
+patternOrder pat = case pat of
+  TuplePattern ps _     -> foldl' max 0 $ map patternOrder ps
+  RecordPattern fs _    -> foldl' max 0 $ map (patternOrder . snd) fs
+  PatternParens p _     -> patternOrder p
+  Id _ (Info t) _       -> order t
+  Wildcard (Info t) _   -> order t
+  PatternAscription p _ -> patternOrder p
 
 -- | Names of primitive types to types.  This is only valid if no
 -- shadowing is going on, but useful for tools.
