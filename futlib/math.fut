@@ -204,7 +204,7 @@ module i8: (size with t = i8) = {
   let set_bit (bit: i32) (x: t) (b: i32) =
     ((x & i32 (intrinsics.~ (1 intrinsics.<< b))) | x intrinsics.<< i32 b)
 
-  let iota (n: i8) = [0i8..1i8..<n]
+  let iota (n: i8) = 0i8..1i8..<n
   let replicate 'v (n: i8) (x: v) = map (const x) (iota n)
 }
 
@@ -261,12 +261,12 @@ module i16: (size with t = i16) = {
   let max (x: t) (y: t) = intrinsics.smax16 x y
   let min (x: t) (y: t) = intrinsics.smin16 x y
 
-  let num_bits = 8
+  let num_bits = 16
   let get_bit (bit: i32) (x: t) = to_i32 ((x >> i32 bit) & i32 1)
   let set_bit (bit: i32) (x: t) (b: i32) =
     ((x & i32 (intrinsics.~(1 intrinsics.<< b))) | x intrinsics.<< i32 b)
 
-  let iota (n: i16) = [0i16..1i16..<n]
+  let iota (n: i16) = 0i16..1i16..<n
   let replicate 'v (n: i16) (x: v) = map (const x) (iota n)
 }
 
@@ -326,12 +326,12 @@ module i32: (size with t = i32) = {
   let max (x: t) (y: t) = intrinsics.smax32 x y
   let min (x: t) (y: t) = intrinsics.smin32 x y
 
-  let num_bits = 8
+  let num_bits = 32
   let get_bit (bit: i32) (x: t) = to_i32 ((x >> i32 bit) & i32 1)
   let set_bit (bit: i32) (x: t) (b: i32) =
     ((x & i32 (intrinsics.~(1 intrinsics.<< b))) | x intrinsics.<< i32 b)
 
-  let iota (n: i32) = [0..1..<n]
+  let iota (n: i32) = 0..1..<n
   let replicate 'v (n: i32) (x: v) = map (const x) (iota n)
 }
 
@@ -391,12 +391,12 @@ module i64: (size with t = i64) = {
   let max (x: t) (y: t) = intrinsics.smax64 x y
   let min (x: t) (y: t) = intrinsics.smin64 x y
 
-  let num_bits = 8
+  let num_bits = 64
   let get_bit (bit: i32) (x: t) = to_i32 ((x >> i32 bit) & i32 1)
   let set_bit (bit: i32) (x: t) (b: i32) =
     ((x & i32 (intrinsics.~(1 intrinsics.<< b))) | x intrinsics.<< i32 b)
 
-  let iota (n: i64) = [0i64..1i64..<n]
+  let iota (n: i64) = 0i64..1i64..<n
   let replicate 'v (n: i64) (x: v) = map (const x) (iota n)
 }
 
@@ -461,7 +461,7 @@ module u8: (size with t = u8) = {
   let set_bit (bit: i32) (x: t) (b: i32) =
     ((x & i32 (intrinsics.~(1 intrinsics.<< b))) | x intrinsics.<< i32 b)
 
-  let iota (n: u8) = [0u8..1u8..<n]
+  let iota (n: u8) = 0u8..1u8..<n
   let replicate 'v (n: u8) (x: v) = map (const x) (iota n)
 }
 
@@ -521,12 +521,12 @@ module u16: (size with t = u16) = {
   let max (x: t) (y: t) = unsign (intrinsics.umax16 (sign x) (sign y))
   let min (x: t) (y: t) = unsign (intrinsics.umin16 (sign x) (sign y))
 
-  let num_bits = 8
+  let num_bits = 16
   let get_bit (bit: i32) (x: t) = to_i32 ((x >> i32 bit) & i32 1)
   let set_bit (bit: i32) (x: t) (b: i32) =
     ((x & i32 (intrinsics.~(1 intrinsics.<< b))) | x intrinsics.<< i32 b)
 
-  let iota (n: u16) = [0u16..1u16..<n]
+  let iota (n: u16) = 0u16..1u16..<n
   let replicate 'v (n: u16) (x: v) = map (const x) (iota n)
 }
 
@@ -586,12 +586,12 @@ module u32: (size with t = u32) = {
   let max (x: t) (y: t) = unsign (intrinsics.umax32 (sign x) (sign y))
   let min (x: t) (y: t) = unsign (intrinsics.umin32 (sign x) (sign y))
 
-  let num_bits = 8
+  let num_bits = 32
   let get_bit (bit: i32) (x: t) = to_i32 ((x >> i32 bit) & i32 1)
   let set_bit (bit: i32) (x: t) (b: i32) =
     ((x & i32 (intrinsics.~(1 intrinsics.<< b))) | x intrinsics.<< i32 b)
 
-  let iota (n: u32) = [0u32..1u32..<n]
+  let iota (n: u32) = 0u32..1u32..<n
   let replicate 'v (n: u32) (x: v) = map (const x) (iota n)
 }
 
@@ -651,12 +651,12 @@ module u64: (size with t = u64) = {
   let max (x: t) (y: t) = unsign (intrinsics.umax64 (sign x) (sign y))
   let min (x: t) (y: t) = unsign (intrinsics.umin64 (sign x) (sign y))
 
-  let num_bits = 8
+  let num_bits = 64
   let get_bit (bit: i32) (x: t) = to_i32 ((x >> i32 bit) & i32 1)
   let set_bit (bit: i32) (x: t) (b: i32) =
     ((x & i32 (intrinsics.~(1 intrinsics.<< b))) | x intrinsics.<< i32 b)
 
-  let iota (n: u64) = [0u64..1u64..<n]
+  let iota (n: u64) = 0u64..1u64..<n
   let replicate 'v (n: u64) (x: v) = map (const x) (iota n)
 }
 
