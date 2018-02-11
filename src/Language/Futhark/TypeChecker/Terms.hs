@@ -686,26 +686,31 @@ checkExp (Negate arg loc) = do
   arg' <- require anyNumberType =<< checkExp arg
   return $ Negate arg' loc
 
-checkExp (Apply (Var qn NoInfo var_loc) e2 NoInfo NoInfo loc) = do
-  (e2', arg) <- checkArg e2
-  (fname, il, ftype) <- lookupFunction qn (argType arg) loc
-
-  let tp2 = typeOf e2'
-      ftype' = removeShapeAnnotations ftype
-  (argtypes, rettype) <- checkApply loc ftype' tp2
-
-  let (f_argtypes, f_rettype) = unfoldFunType ftype
-      f_argtypes' = map toStruct f_argtypes
-      f_rettype' = removeShapeAnnotations f_rettype
-  return $ Apply (Var fname (Info (il, f_argtypes', f_rettype')) var_loc)
-           e2' (Info $ diet tp2) (Info (argtypes, rettype)) loc
-
 checkExp (Apply e1 e2 NoInfo NoInfo loc) = do
-  e1' <- checkExp e1
-  e2' <- checkExp e2
-  let tp2 = typeOf e2'
-  (argtypes, rettype) <- checkApply loc (typeOf e1') tp2
-  return $ Apply e1' e2' (Info $ diet tp2) (Info (argtypes, rettype)) loc
+  (e2', arg) <- checkArg e2
+  let tp2 = argType arg
+  case e1 of
+    Var qn _ var_loc -> do
+      r <- (Right <$> lookupFunction qn tp2 loc)
+            `catchError` (return . Left)
+      case r of
+        Right (fname, il, ftype) -> do
+          let ftype' = removeShapeAnnotations ftype
+          (t1, paramtypes, rettype) <- checkApply loc ftype' arg
+          return $ Apply (Var fname (Info (il, t1:paramtypes, rettype)) var_loc)
+                   e2' (Info $ diet t1) (Info (paramtypes, rettype)) loc
+
+        -- Even if the function lookup failed, the applied expression
+        -- may still be a record projection of a function.
+        Left _ -> checkGeneralApp e2' arg
+
+    _ -> checkGeneralApp e2' arg
+
+  where checkGeneralApp e2' arg = do
+          e1' <- checkExp e1
+          (t1, paramtypes, rettype) <- checkApply loc (typeOf e1') arg
+          return $ Apply e1' e2' (Info $ diet t1)
+                   (Info (paramtypes, rettype)) loc
 
 checkExp (LetPat tparams pat e body pos) = do
   noTypeParamsPermitted tparams
@@ -1165,14 +1170,15 @@ findFuncall (Apply f arg _ _ _) = do
 findFuncall e =
   throwError $ TypeError (srclocOf e) "Invalid function expression in application."
 
-constructFuncall :: SrcLoc -> QualName VName
+constructFuncall :: SrcLoc -> QualName VName -> [TypeBase () ()]
                  -> [Exp] -> [StructType] -> TypeBase dim Names
                  -> TermTypeM Exp
-constructFuncall loc fname args paramtypes rettype = do
+constructFuncall loc fname il args paramtypes rettype = do
   let rettype' = removeShapeAnnotations rettype
   return $ foldl (\f (arg,d,remnant) -> Apply f arg (Info d) (Info (remnant, rettype')) loc)
-                 (Var fname (Info ([], paramtypes, rettype')) loc)
+                 (Var fname (Info (il, paramtypes, rettype')) loc)
                  (zip3 args (map diet paramtypes) $ drop 1 $ tails paramtypes)
+
 
 type Arg = (CompType, Occurences, SrcLoc)
 
@@ -1184,22 +1190,31 @@ checkArg arg = do
   (arg', dflow) <- collectOccurences $ checkExp arg
   return (arg', (typeOf arg', dflow, srclocOf arg'))
 
-checkApply :: SrcLoc -> CompType -> CompType
-           -> TermTypeM ([StructType], CompType)
-checkApply _ (Arrow _ _ tp1 tp2) argtype = do
+checkApply :: SrcLoc -> CompType -> Arg
+           -> TermTypeM (StructType, [StructType], CompType)
+checkApply loc (Arrow as _ tp1 tp2) (argtype, dflow, argloc) = do
   instantiate (toStruct tp1) (toStruct argtype)
-  let (argtypes, rettype) = unfoldFunType tp2
+  let (paramtypes, rettype) = unfoldFunType tp2
+
   -- Perform substitutions of instantiated variables in the types.
   substs <- gets $ M.map fromStruct
   let rettype' = substTypes substs rettype
-      argtypes' = map (vacuousShapeAnnotations .
-                       toStruct . substTypes substs) argtypes
-  return (argtypes', rettype')
-checkApply loc ftype argtype =
+      (tp1' : paramtypes') =
+        map (vacuousShapeAnnotations .
+             toStruct . substTypes substs) (tp1 : paramtypes)
+
+  occur [observation as loc]
+
+  maybeCheckOccurences dflow
+  let occurs = consumeArg argloc argtype (diet tp1')
+  occur $ dflow `seqOccurences` occurs
+
+  return (tp1', paramtypes', rettype')
+
+checkApply loc ftype arg =
   throwError $ TypeError loc $
   "Attempt to apply an expresion of type " ++ pretty ftype ++
-  " to an argument of type " ++ pretty argtype ++ "."
-
+  " to an argument of type " ++ pretty (argType arg) ++ "."
 
 checkFuncall :: Maybe (QualName Name) -> SrcLoc -> PatternType -> [Arg]
              -> TermTypeM ([StructType], TypeBase (DimDecl VName) Names)
@@ -1216,11 +1231,24 @@ checkFuncall maybe_fname loc ftype args = do
   -- Instantiate the parameter types in case the function is polymorphic.
   zipWithM_ instantiate (map toStructural pts)
                         (map (toStructural . argType) args)
-  let paramtypes = map toStruct $ take (length args) pts
-      rettype = foldr (Arrow mempty Nothing) ret (drop (length args) pts)
 
-  return (paramtypes, rettype)
+  substs <- gets $ M.map (vacuousShapeAnnotations . fromStruct)
+  let pts' = map (substTypes substs) pts
+      ret' = substTypes substs ret
+      (pts'', rem_params) = splitAt (length args) pts'
+      paramtypes = map toStruct pts''
+      rettype = toStruct $ foldr (Arrow mempty Nothing) ret' rem_params
 
+  occur [observation (aliases ftype) loc]
+
+  let diets = map diet paramtypes
+  forM_ (zip diets args) $ \(d, (t, dflow, argloc)) -> do
+    maybeCheckOccurences dflow
+    let occurs = consumeArg argloc t d
+    occur $ dflow `seqOccurences` occurs
+
+  return (paramtypes,
+          returnType rettype diets (map argType args))
   where
     prefix = (("In call of function " ++ fname ++ ": ")++)
     fname = maybe "anonymous function" pretty maybe_fname
@@ -1398,16 +1426,19 @@ checkFunExp (OpSectionRight binop x _ _ loc) args
 checkFunExp e args = do
   (fname, curryargexps) <- findFuncall e
   (curryargexps', curryargs) <- unzip <$> mapM checkArg curryargexps
-  (fname', _, ftype) <- lookupFunction fname (argType . head $ curryargs++args) loc
+  let all_args = curryargs ++ args
+  (fname', instance_list, ftype) <- case all_args of
+    [] -> error "Function expression in SOAC with no arguments."
+    (arg : _) -> lookupFunction fname (argType arg) loc
 
-  (paramtypes', rettype') <- checkFuncall Nothing loc ftype (curryargs ++ args)
+  (paramtypes', rettype') <- checkFuncall Nothing loc ftype all_args
 
   case find (unique . snd) $ zip curryargexps paramtypes' of
     Just (arg, _) -> throwError $ CurriedConsumption fname $ srclocOf arg
     _             -> return ()
 
   let rettype'' = removeShapeAnnotations rettype'
-  e' <- constructFuncall loc fname' curryargexps' paramtypes' rettype''
+  e' <- constructFuncall loc fname' instance_list curryargexps' paramtypes' rettype''
   return (e', rettype'' `setAliases` mempty)
   where loc = srclocOf e
 
