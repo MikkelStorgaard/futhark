@@ -585,8 +585,10 @@ defuncDecs (ValDec valbind : ds) = do
   (valbind', env) <- defuncValBind valbind
   ds' <- local env $ defuncDecs ds
   return $ ValDec valbind' : ds'
+defuncDecs (TypeDec dec : ds) =
+  (TypeDec dec :) <$> defuncDecs ds
 defuncDecs (dec : _) =
-  error $ "Received declaration " ++ pretty dec
+  error $ "Defunctionalizer received declaration " ++ pretty dec
        ++ ", but can only handle value declarations at this point."
 
 -- | Transform a list of top-level declarations. May produce new lifted function

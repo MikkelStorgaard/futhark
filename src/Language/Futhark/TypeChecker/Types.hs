@@ -22,6 +22,8 @@ module Language.Futhark.TypeChecker.Types
   , instantiatePolymorphic
 
   , arrayOfM
+
+  , substTypesAny
   )
 where
 
@@ -557,3 +559,32 @@ arrayOfM :: (MonadTypeChecker m, Pretty (ShapeDecl dim), ArrayDim dim, Monoid as
 arrayOfM loc t shape u = maybe nope return $ arrayOf t shape u
   where nope = throwError $ TypeError loc $
                "Cannot form an array with elements of type " ++ pretty t
+
+-- | Perform substitutions, from type names to types, on a type. Works
+-- regardless of what shape and uniqueness information is attached to the type.
+substTypesAny :: (ArrayDim dim, Monoid as) => M.Map VName (TypeBase dim as)
+           -> TypeBase dim as -> TypeBase dim as
+substTypesAny substs ot = case ot of
+  Prim t -> Prim t
+  Array at shape u -> fromMaybe nope $ arrayOf (subsArrayElem at) shape u
+  TypeVar v []
+    | Just t <- M.lookup (qualLeaf (qualNameFromTypeName v)) substs -> t
+  TypeVar v targs -> TypeVar v $ map subsTypeArg targs
+
+  Record ts ->  Record $ fmap (substTypesAny substs) ts
+  Arrow als v t1 t2 ->
+    Arrow als v (substTypesAny substs t1) (substTypesAny substs t2)
+
+  where nope = error "substituteTypes: Cannot create array after substitution."
+
+        subsArrayElem (ArrayPrimElem t _) = Prim t
+        subsArrayElem (ArrayPolyElem v [] _)
+          | Just t <- M.lookup (qualLeaf (qualNameFromTypeName v)) substs = t
+        subsArrayElem (ArrayPolyElem v targs _) =
+          TypeVar v (map subsTypeArg targs)
+        subsArrayElem (ArrayRecordElem ts) =
+          Record $ fmap (substTypesAny substs . recordArrayElemToType) ts
+
+        subsTypeArg (TypeArgType t loc) =
+          TypeArgType (substTypesAny substs t) loc
+        subsTypeArg t = t

@@ -323,7 +323,7 @@ instantiateTypeScheme tparams t = do
   fresh_tnames <- mapM newName tnames
   let inst_list = map (\vn -> TypeVar (TypeName [] vn) []) fresh_tnames
       substs = M.fromList $ zip tnames inst_list
-      t' = substTypes substs t
+      t' = substTypesAny substs t
   return (tnames, inst_list, t')
   where isTypeParam TypeParamType{} = True
         isTypeParam _ = False
@@ -1198,10 +1198,10 @@ checkApply loc (Arrow as _ tp1 tp2) (argtype, dflow, argloc) = do
 
   -- Perform substitutions of instantiated variables in the types.
   substs <- gets $ M.map fromStruct
-  let rettype' = substTypes substs rettype
+  let rettype' = substTypesAny substs rettype
       (tp1' : paramtypes') =
         map (vacuousShapeAnnotations .
-             toStruct . substTypes substs) (tp1 : paramtypes)
+             toStruct . substTypesAny substs) (tp1 : paramtypes)
 
   occur [observation as loc]
 
@@ -1233,8 +1233,8 @@ checkFuncall maybe_fname loc ftype args = do
                         (map (toStructural . argType) args)
 
   substs <- gets $ M.map (vacuousShapeAnnotations . fromStruct)
-  let pts' = map (substTypes substs) pts
-      ret' = substTypes substs ret
+  let pts' = map (substTypesAny substs) pts
+      ret' = substTypesAny substs ret
       (pts'', rem_params) = splitAt (length args) pts'
       paramtypes = map toStruct pts''
       rettype = toStruct $ foldr (Arrow mempty Nothing) ret' rem_params
@@ -1579,32 +1579,6 @@ unfoldFunType (Arrow _ _ t1 t2) = let (ps, r) = unfoldFunType t2
 unfoldFunType t = ([], t)
 
 
-substTypes :: (ArrayDim dim, Monoid as) => M.Map VName (TypeBase dim as)
-           -> TypeBase dim as -> TypeBase dim as
-substTypes substs ot = case ot of
-  Prim t -> Prim t
-  Array at shape u -> fromMaybe nope $ arrayOf (subsArrayElem at) shape u
-  TypeVar v []
-    | Just t <- M.lookup (qualLeaf (qualNameFromTypeName v)) substs -> t
-  TypeVar v targs -> TypeVar v $ map subsTypeArg targs
-
-  Record ts ->  Record $ fmap (substTypes substs) ts
-  Arrow als v t1 t2 ->
-    Arrow als v (substTypes substs t1) (substTypes substs t2)
-
-  where nope = error "substituteTypes: Cannot create array after substitution."
-
-        subsArrayElem (ArrayPrimElem t _) = Prim t
-        subsArrayElem (ArrayPolyElem v [] _)
-          | Just t <- M.lookup (qualLeaf (qualNameFromTypeName v)) substs = t
-        subsArrayElem (ArrayPolyElem v targs _) =
-          TypeVar v (map subsTypeArg targs)
-        subsArrayElem (ArrayRecordElem ts) =
-          Record $ fmap (substTypes substs . recordArrayElemToType) ts
-
-        subsTypeArg (TypeArgType t loc) =
-          TypeArgType (substTypes substs t) loc
-        subsTypeArg t = t
 
 -- | Perform substitutions of instantiated variables on the type
 -- annotations (including the instance lists) of an expression.
@@ -1617,9 +1591,9 @@ updateExpTypes e = do
       tv = ASTMapper { mapOnExp         = astMap tv
                      , mapOnName        = pure
                      , mapOnQualName    = pure
-                     , mapOnType        = pure . substTypes substs
-                     , mapOnCompType    = pure . substTypes substs_ct
-                     , mapOnStructType  = pure . substTypes substs_st
-                     , mapOnPatternType = pure . substTypes substs_pt
+                     , mapOnType        = pure . substTypesAny substs
+                     , mapOnCompType    = pure . substTypesAny substs_ct
+                     , mapOnStructType  = pure . substTypesAny substs_st
+                     , mapOnPatternType = pure . substTypesAny substs_pt
                      }
   astMap tv e
