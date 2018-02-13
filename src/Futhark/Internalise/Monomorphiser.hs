@@ -124,7 +124,7 @@ transformExp (LetPat tparams pat e1 e2 loc) =
   LetPat tparams pat <$> transformExp e1 <*> transformExp e2 <*> pure loc
 
 transformExp (LetFun fname (tparams, params, _, Info ret, body) e loc)
-  | null (filter isTypeParam tparams) = do
+  | not (any isTypeParam tparams) = do
       body' <- transformExp body
       e' <- transformExp e
       return $ LetFun fname (tparams, params, Nothing, Info ret, body') e' loc
@@ -276,7 +276,7 @@ monomorphizeBinding (PolyBinding (name, tparams, params, rettype, body)) il = do
         substs_st = M.map vacuousShapeAnnotations substs
         substs_pt = M.map fromStruct substs_st
 
-        updateExpTypes e = astMap mapper e
+        updateExpTypes = astMap mapper
         mapper = ASTMapper { mapOnExp         = astMap mapper
                            , mapOnName        = pure
                            , mapOnQualName    = pure
@@ -296,10 +296,6 @@ substPattern f pat = case pat of
   Id vn (Info tp) loc    -> Id vn (Info $ f tp) loc
   Wildcard (Info tp) loc -> Wildcard (Info $ f tp) loc
   PatternAscription p _  -> substPattern f p
-
-isTypeParam :: TypeParam -> Bool
-isTypeParam TypeParamType{} = True
-isTypeParam TypeParamDim{}  = False
 
 toPolyBinding :: ValBind -> PolyBinding
 toPolyBinding (ValBind _ name _ (Info rettype) tparams params body _ _) =
@@ -322,7 +318,7 @@ toValBinding (MonoBinding (name, params, rettype, body)) =
 transformDecs :: [Dec] -> MonoM [Dec]
 transformDecs [] = return []
 transformDecs (ValDec valbind : ds)
-  | null $ filter isTypeParam $ valBindTypeParams valbind = pass $ do
+  | not $ any isTypeParam $ valBindTypeParams valbind = pass $ do
       (body', binds) <- listen $ transformExp $ valBindBody valbind
       (ds', rem_binds) <- listen $ transformDecs ds
       let valbind' = ValDec valbind { valBindBody = body' }

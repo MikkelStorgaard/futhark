@@ -476,9 +476,6 @@ checkValBind (ValBind entry fname maybe_tdecl NoInfo tparams params body doc loc
                  },
            ValBind entry fname' maybe_tdecl' (Info rettype) tparams' params' body' doc loc)
 
-  where isTypeParam TypeParamType{} = True
-        isTypeParam _ = False
-
 checkDec :: DecBase NoInfo Name -> TypeM (TySet, Env, DecBase Info VName)
 checkDec (ModDec struct) = do
   (abs, modenv, struct') <- checkModBind struct

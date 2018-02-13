@@ -131,7 +131,8 @@ defuncExp (Var qn _ loc) = do
 defuncExp (Ascript e0 _ _) = defuncExp e0
 
 defuncExp (LetPat tparams pat e1 e2 loc) = do
-  unless (null tparams) $ error $ expectedMonomorphic "let-binding"
+  when (any isTypeParam tparams) $
+    error $ expectedMonomorphic "let-binding"
   (e1', sv1) <- defuncExp e1
   let env  = matchPatternSV pat sv1
       pat' = updatePattern pat sv1
@@ -139,7 +140,8 @@ defuncExp (LetPat tparams pat e1 e2 loc) = do
   return (LetPat tparams pat' e1' e2' loc, sv2)
 
 defuncExp (LetFun vn (tparams, pats, _, rettype, e1) e2 loc) = do
-  unless (null tparams) $ error $ expectedMonomorphic "let-bound function"
+  when (any isTypeParam tparams) $
+    error $ expectedMonomorphic "let-bound function"
   (pats', e1', sv1) <- defuncLet pats e1 rettype
   (e2', sv2) <- local (extendEnv vn sv1) $ defuncExp e2
   case pats' of
@@ -161,7 +163,7 @@ defuncExp (Negate e0 loc) = do
   return (Negate e0' loc, sv)
 
 defuncExp expr@(Lambda tparams pats e0 decl tp loc) = do
-  unless (null tparams) $ error $ expectedMonomorphic "lambda"
+  when (any isTypeParam tparams) $ error $ expectedMonomorphic "lambda"
   -- Extract the first parameter of the lambda and "push" the
   -- remaining ones (if there are any) into the body of the lambda.
   let (pat, e0') = case pats of
@@ -187,7 +189,7 @@ defuncExp expr@(OpSectionRight qn e tps tp loc) = do
   return (OpSectionRight qn e' tps tp loc, Dynamic $ typeOf expr)
 
 defuncExp (DoLoop tparams pat e1 form e3 loc) = do
-  unless (null tparams) $ error $ expectedMonomorphic "loop"
+  when (any isTypeParam tparams) $ error $ expectedMonomorphic "loop"
   (e1', sv1) <- defuncExp e1
   let env1 = matchPatternSV pat sv1
   (form', env2) <- case form of
@@ -408,10 +410,10 @@ replNthDynFun sv _ n = error $ "Tried to replace the " ++ show n
 -- | Check if a 'StaticVal' and a given application depth corresponds
 -- to a fully applied dynamic function.
 fullyApplied :: StaticVal -> Int -> Bool
-fullyApplied Dynamic{}         0         = True
-fullyApplied LambdaSV{}        _         = True
-fullyApplied (DynamicFun _ sv) d | d > 0 = fullyApplied sv (d-1)
-fullyApplied _ _                         = False
+fullyApplied (DynamicFun _ sv) depth
+  | depth == 0   = False
+  | depth >  0   = fullyApplied sv (depth-1)
+fullyApplied _ _ = True
 
 -- | Converts a dynamic function 'StaticVal' into a list of parameters,
 -- a function body, and the static value that results from applying the
@@ -582,7 +584,7 @@ expectedMonomorphic msg =
 -- bound name to the static value of the transformed body.
 defuncValBind :: ValBind -> DefM (ValBind, Env -> Env)
 defuncValBind valbind@(ValBind _ name _ rettype tparams params body _ _) = do
-  unless (null tparams) $
+  when (any isTypeParam tparams) $
     error $ expectedMonomorphic "top-level value declaration"
   (params', body', sv) <- defuncLet params body rettype
   let rettype' = vacuousShapeAnnotations . toStruct $ typeOf body'

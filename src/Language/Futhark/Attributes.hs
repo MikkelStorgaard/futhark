@@ -61,6 +61,7 @@ module Language.Futhark.Attributes
   , isTupleRecord
   , areTupleFields
   , sortFields
+  , isTypeParam
 
   -- | Values of these types are produces by the parser.  They use
   -- unadorned names and have no type information, apart from that
@@ -334,6 +335,10 @@ sortFields l = map snd $ sortBy (comparing fst) $ zip (map (fieldish . fst) l') 
         fieldish s = case reads $ nameToString s of
           [(x, "")] -> Left (x::Int)
           _         -> Right s
+
+isTypeParam :: TypeParamBase vn -> Bool
+isTypeParam TypeParamType{} = True
+isTypeParam TypeParamDim{}  = False
 
 
 -- | Set the uniqueness attribute of a type.  If the type is a tuple,

@@ -325,8 +325,6 @@ instantiateTypeScheme tparams t = do
       substs = M.fromList $ zip tnames inst_list
       t' = substTypesAny substs t
   return (tnames, inst_list, t')
-  where isTypeParam TypeParamType{} = True
-        isTypeParam _ = False
 
 --- Basic checking
 
@@ -471,11 +469,11 @@ checkTypeParamsUsed tps ps = do
 
 noTypeParamsPermitted :: [UncheckedTypeParam] -> TermTypeM ()
 noTypeParamsPermitted ps =
-  case mapMaybe isTypeParam ps of
+  case mapMaybe typeParamLoc ps of
     loc:_ -> throwError $ TypeError loc "Type parameters are not permitted here."
     []    -> return ()
-  where isTypeParam (TypeParamType _ loc) = Just loc
-        isTypeParam _                     = Nothing
+  where typeParamLoc (TypeParamType _ loc) = Just loc
+        typeParamLoc _                     = Nothing
 
 patternDims :: Pattern -> [Ident]
 patternDims (PatternParens p _) = patternDims p
