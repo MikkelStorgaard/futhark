@@ -157,6 +157,24 @@ transformExp (Lambda tparams params e0 decl tp loc) = do
   e0' <- transformExp e0
   return $ Lambda tparams params e0' decl tp loc
 
+transformExp e@OpSection{} = return e
+
+transformExp (OpSectionLeft qn e argtypes rettype loc) = do
+  e' <- transformExp e
+  return $ OpSectionLeft qn e' argtypes rettype loc
+
+transformExp (OpSectionRight qn e argtypes rettype loc) = do
+  e' <- transformExp e
+  return $ OpSectionRight qn e' argtypes rettype loc
+
+transformExp (DoLoop tparams pat e1 form e3 loc) = do
+  e1' <- transformExp e1
+  form' <- case form of
+    For ident e2  -> For ident <$> transformExp e2
+    ForIn pat2 e2 -> ForIn pat2 <$> transformExp e2
+    While e2      -> While <$> transformExp e2
+  e3' <- transformExp e3
+  return $ DoLoop tparams pat e1' form' e3' loc
 
 transformExp (BinOp qn (e1, d1) (e2, d2) tp loc) = do
   e1' <- transformExp e1
@@ -167,7 +185,69 @@ transformExp (Project n e tp loc) = do
   e' <- transformExp e
   return $ Project n e' tp loc
 
-transformExp e = error $ "transformExp: missing case for " ++ pretty e
+transformExp (LetWith id1 id2 idxs e1 body loc) = do
+  idxs' <- mapM transformDimIndex idxs
+  e1' <- transformExp e1
+  body' <- transformExp body
+  return $ LetWith id1 id2 idxs' e1' body' loc
+
+transformExp (Index e0 idxs loc) =
+  Index <$> transformExp e0 <*> mapM transformDimIndex idxs <*> pure loc
+
+transformExp (Update e1 idxs e2 loc) =
+  Update <$> transformExp e1 <*> mapM transformDimIndex idxs
+         <*> transformExp e2 <*> pure loc
+
+transformExp (Concat i e1 es loc) =
+  Concat i <$> transformExp e1 <*> mapM transformExp es <*> pure loc
+
+transformExp (Reshape e1 e2 loc) =
+  Reshape <$> transformExp e1 <*> transformExp e2 <*> pure loc
+
+transformExp (Rearrange is e0 loc) =
+  Rearrange is <$> transformExp e0 <*> pure loc
+
+transformExp (Rotate i e1 e2 loc) =
+  Rotate i <$> transformExp e1 <*> transformExp e2 <*> pure loc
+
+transformExp (Map e1 es tp loc) =
+  Map <$> transformExp e1 <*> mapM transformExp es <*> pure tp <*> pure loc
+
+transformExp (Reduce comm e1 e2 e3 loc) =
+  Reduce comm <$> transformExp e1 <*> transformExp e2
+              <*> transformExp e3 <*> pure loc
+
+transformExp (Scan e1 e2 e3 loc) =
+  Scan <$> transformExp e1 <*> transformExp e2 <*> transformExp e3 <*> pure loc
+
+transformExp (Filter e1 e2 loc) =
+  Filter <$> transformExp e1 <*> transformExp e2 <*> pure loc
+
+transformExp (Partition es e0 loc) =
+  Partition <$> mapM transformExp es <*> transformExp e0 <*> pure loc
+
+transformExp (Stream form e1 e2 loc) = do
+  form' <- case form of
+             MapLike _         -> return form
+             RedLike so comm e -> RedLike so comm <$> transformExp e
+  Stream form' <$> transformExp e1 <*> transformExp e2 <*> pure loc
+
+transformExp (Zip i e1 es tp uniq loc) = do
+  e1' <- transformExp e1
+  es' <- mapM transformExp es
+  return $ Zip i e1' es' tp uniq loc
+
+transformExp (Unzip e0 tps loc) =
+  Unzip <$> transformExp e0 <*> pure tps <*> pure loc
+
+transformExp (Unsafe e1 loc) =
+  Unsafe <$> transformExp e1 <*> pure loc
+
+transformDimIndex :: DimIndexBase Info VName -> MonoM (DimIndexBase Info VName)
+transformDimIndex (DimFix e) = DimFix <$> transformExp e
+transformDimIndex (DimSlice me1 me2 me3) =
+  DimSlice <$> trans me1 <*> trans me2 <*> trans me3
+  where trans = mapM transformExp
 
 -- | Convert a collection of 'MonoBinding's to a nested sequence of let-bound,
 -- monomorphic functions with the given expression at the bottom.
