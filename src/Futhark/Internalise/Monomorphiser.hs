@@ -1,7 +1,11 @@
 -- | This monomorphization modules converts a well-typed, polymorphic,
 -- module-free Futhark program into an equivalent monomorphic program.
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-module Futhark.Internalise.Monomorphiser where
+module Futhark.Internalise.Monomorphiser
+  ( transformProg
+  , transformDecs
+  , runMonoM
+  ) where
 
 import           Control.Monad.RWS
 import           Control.Monad.State
