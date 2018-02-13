@@ -21,6 +21,7 @@ data StaticVal = Dynamic CompType
                | LambdaSV Pattern Exp Env
                | RecordSV [(Name, StaticVal)]
                | DynamicFun (Exp, StaticVal) StaticVal
+               | IntrinsicSV
   deriving (Show)
 
 -- | Environment mapping variable names to their associated static value.
@@ -58,7 +59,10 @@ lookupVar x = do
   env <- ask
   case lookup x env of
     Just sv -> return sv
-    Nothing -> error $ "Variable " ++ pretty x ++ " is out of scope."
+    Nothing -- If the variable is unknown, it may refer to the 'intrinsics'
+            -- module, which we will have to treat specially.
+      | baseTag x <= maxIntrinsicTag -> return IntrinsicSV
+      | otherwise -> error $ "Variable " ++ pretty x ++ " is out of scope."
 
 -- | Defunctionalization of an expression. Returns the residual expression and
 -- the associated static value in the defunctionalization monad.
@@ -331,7 +335,7 @@ defuncLet [] body _ = do
 -- but a new lifted function is created if a dynamic function is only partially
 -- applied.
 defuncApply :: Int -> Exp -> DefM (Exp, StaticVal)
-defuncApply depth (Apply e1 e2 d (Info (argtypes, _)) loc) = do
+defuncApply depth e@(Apply e1 e2 d (Info (argtypes, _)) loc) = do
   (e1', sv1) <- defuncApply (depth+1) e1
   (e2', sv2) <- defuncExp e2
   case sv1 of
@@ -360,10 +364,16 @@ defuncApply depth (Apply e1 e2 d (Info (argtypes, _)) loc) = do
       let (argtypes', rettype) = dynamicFunType sv argtypes
       in return (Apply e1' e2' d (Info (argtypes', rettype)) loc, sv)
 
+    -- Propagate the 'IntrinsicsSV' until we reach the outermost application,
+    -- where we construct a dynamic static value with the appropriate type.
+    IntrinsicSV
+      | depth == 0 -> return (e, Dynamic $ typeOf e)
+      | otherwise  -> return (e, IntrinsicSV)
+
     _ -> error $ "Application of an expression that is neither a static lambda "
               ++ "nor a dynamic function, but has static value: " ++ show sv1
 
-defuncApply depth (Var qn (Info (_, argtypes, _)) loc) = do
+defuncApply depth e@(Var qn (Info (_, argtypes, _)) loc) = do
     sv <- lookupVar (qualLeaf qn)
     case sv of
       DynamicFun _ _
@@ -380,6 +390,8 @@ defuncApply depth (Var qn (Info (_, argtypes, _)) loc) = do
                 (argtypes', rettype) = dynamicFunType sv'' argtypes
             liftValDec fname rettype pats e0
             return (Var (qualName fname) (Info ([], argtypes', rettype)) loc, sv'')
+
+      IntrinsicSV -> return (e, IntrinsicSV)
 
       _ -> return (Var qn (Info ([], [], typeFromSV sv)) loc, sv)
 
@@ -454,6 +466,8 @@ typeFromSV (LambdaSV _ _ env)     = typeFromEnv env
 typeFromSV (RecordSV ls)          = Record . M.fromList $
                                     map (\(vn, sv) -> (vn, typeFromSV sv)) ls
 typeFromSV (DynamicFun (_, sv) _) = typeFromSV sv
+typeFromSV IntrinsicSV            = error $ "Tried to get the type from the "
+                                         ++ "static value of an intrinsic."
 
 typeFromEnv :: Env -> CompType
 typeFromEnv = Record . M.fromList .
