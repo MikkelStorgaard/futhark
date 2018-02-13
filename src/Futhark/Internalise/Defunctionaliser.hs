@@ -531,47 +531,81 @@ svFromType t           = Dynamic t
 -- | Compute the set of free variables of an expression.
 freeVars :: Exp -> Names
 freeVars expr = case expr of
-  Literal _ _          -> S.empty
+  Literal{}            -> mempty
   Parens e _           -> freeVars e
-  QualParens _ _ _     -> undefined  -- TODO
+  QualParens _ e _     -> freeVars e
   TupLit es _          -> foldMap freeVars es
+
   RecordLit fs _       -> foldMap freeVarsField fs
     where freeVarsField (RecordFieldExplicit _ e _)  = freeVars e
           freeVarsField (RecordFieldImplicit vn _ _) = S.singleton vn
+
   ArrayLit es _ _      -> foldMap freeVars es
   Range e me incl _ _  -> freeVars e <> foldMap freeVars me <>
                           foldMap freeVars incl
-  Empty _ _ _          -> S.empty
+  Empty{}              -> mempty
   Var qn _ _           -> S.singleton $ qualLeaf qn
   Ascript e _ _        -> freeVars e
   LetPat _ pat e1 e2 _ -> freeVars e1 <> (freeVars e2 S.\\ patternVars pat)
+
   LetFun vn (_, pats, _, _, e1) e2 _ ->
-    (freeVars e1 `S.difference` foldMap patternVars pats) <>
-    (freeVars e2 `S.difference` S.singleton vn)
+    (freeVars e1 S.\\ foldMap patternVars pats) <>
+    (freeVars e2 S.\\ S.singleton vn)
+
   If e1 e2 e3 _ _           -> freeVars e1 <> freeVars e2 <> freeVars e3
   Apply e1 e2 _ _ _         -> freeVars e1 <> freeVars e2
   Negate e _                -> freeVars e
   Lambda _ pats e0 _ _ _    -> freeVars e0 S.\\ foldMap patternVars pats
-  OpSection _ _ _ _ _       -> S.empty
+  OpSection{}               -> mempty
   OpSectionLeft  _ e _ _ _  -> freeVars e
   OpSectionRight _ e _ _ _  -> freeVars e
+
   DoLoop _ pat e1 form e3 _ -> let (e2fv, e2ident) = formVars form
                                in freeVars e1 <> e2fv <>
-                                  (freeVars e3 S.\\ (patternVars pat <> e2ident))
+                               (freeVars e3 S.\\ (patternVars pat <> e2ident))
     where formVars (For ident e2) = (freeVars e2, S.singleton $ identName ident)
           formVars (ForIn p e2)   = (freeVars e2, patternVars p)
           formVars (While e2)     = (freeVars e2, S.empty)
-  BinOp _ (e1, _) (e2, _) _ _ -> freeVars e1 `S.union` freeVars e2
-  Project _ e _ _ -> freeVars e
-  _ -> error $ "freeVars: unhandled case " ++ pretty expr
+
+  BinOp _ (e1, _) (e2, _) _ _  -> freeVars e1 <> freeVars e2
+  Project _ e _ _              -> freeVars e
+
+  LetWith id1 id2 idxs e1 e2 _ ->
+    S.singleton (identName id2) <> foldMap freeDimIndex idxs <> freeVars e1 <>
+    (freeVars e2 S.\\ S.singleton (identName id1))
+
+  Index e idxs _      -> freeVars e  <> foldMap freeDimIndex idxs
+  Update e1 idxs e2 _ -> freeVars e1 <> foldMap freeDimIndex idxs <> freeVars e2
+  Concat _ e1 es _    -> freeVars e1 <> foldMap freeVars es
+  Reshape e1 e2 _     -> freeVars e1 <> freeVars e2
+  Rearrange _ e _     -> freeVars e
+  Rotate _ e1 e2 _    -> freeVars e1 <> freeVars e2
+
+  Map e1 es _ _       -> freeVars e1 <> foldMap freeVars es
+  Reduce _ e1 e2 e3 _ -> freeVars e1 <> freeVars e2 <> freeVars e3
+  Scan e1 e2 e3 _     -> freeVars e1 <> freeVars e2 <> freeVars e3
+  Filter e1 e2 _      -> freeVars e1 <> freeVars e2
+  Partition es e _    -> foldMap freeVars es <> freeVars e
+  Stream form e1 e2 _ -> freeInForm form <> freeVars e1 <> freeVars e2
+    where freeInForm (RedLike _ _ e) = freeVars e
+          freeInForm _ = mempty
+
+  Zip _ e es _ _ _    -> freeVars e <> foldMap freeVars es
+  Unzip e _ _         -> freeVars e
+  Unsafe e _          -> freeVars e
+
+freeDimIndex :: DimIndexBase Info VName -> Names
+freeDimIndex (DimFix e) = freeVars e
+freeDimIndex (DimSlice me1 me2 me3) =
+  foldMap (foldMap freeVars) [me1, me2, me3]
 
 -- | Extract all the variable names bound in a pattern.
 patternVars :: Pattern -> Names
-patternVars (TuplePattern pats _)     = S.unions $ map patternVars pats
-patternVars (RecordPattern fs _)      = S.unions $ map (patternVars . snd) fs
+patternVars (TuplePattern pats _)     = foldMap patternVars pats
+patternVars (RecordPattern fs _)      = foldMap (patternVars . snd) fs
 patternVars (PatternParens pat _)     = patternVars pat
 patternVars (Id vn _ _)               = S.singleton vn
-patternVars (Wildcard _ _)            = S.empty
+patternVars (Wildcard _ _)            = mempty
 patternVars (PatternAscription pat _) = patternVars pat
 
 expectedMonomorphic :: String -> String
