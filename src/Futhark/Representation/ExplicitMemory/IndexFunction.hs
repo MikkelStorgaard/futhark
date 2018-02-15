@@ -236,6 +236,9 @@ reshape (Permute ixfun perm) newshape
         sequential (x:xs) = and $ zipWith (==) xs [x+1, x+2..]
 
 reshape (Index ixfun slicing) newshape
+  | [newdim] <- newDims newshape,
+    Just slicing' <- findSlice slicing (Just newdim) =
+      Index ixfun slicing'
   | (is, rem_slicing) <- splitSlice slicing,
     (fixed_ds, sliced_ds) <- splitAt (length is) $ shape ixfun,
     and $ zipWith isSliceOf rem_slicing sliced_ds =
@@ -245,6 +248,13 @@ reshape (Index ixfun slicing) newshape
          map DimFix is ++ map (unitSlice (fromInt32 0)) (newDims newshape)
   where isSliceOf (DimSlice _ d1 _) d2 = d1 == d2
         isSliceOf _ _ = False
+
+        findSlice (DimFix i:is) d = (DimFix i:) <$> findSlice is d
+        findSlice (DimSlice j _ stride:is) d = do
+          d' <- d
+          (DimSlice j d' stride:) <$> findSlice is Nothing
+        findSlice [] Just{} = Nothing
+        findSlice [] Nothing = Just []
 
 reshape ixfun newshape
   | shape ixfun == map newDim newshape =
@@ -317,8 +327,8 @@ rebase :: (Eq num, IntegralExp num) =>
        -> IxFun num
        -> IxFun num
 rebase new_base (Direct old_shape)
-  | length old_shape == rank new_base = new_base
-  | otherwise = error "IndexFunction.rebase: bad rank for new base."
+  | old_shape == shape new_base = new_base
+  | otherwise = reshape new_base $ map DimCoercion old_shape
 rebase new_base (Permute ixfun perm) =
   permute (rebase new_base ixfun) perm
 rebase new_base (Rotate ixfun offsets) =

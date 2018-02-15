@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ### Changed
 
+### Fixed
+
+## [0.3.1]
+
+### Added
+
    * `futhark-bench` now tries to align benchmark results for better
      legibility.
 
@@ -21,6 +27,12 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
    * `futhark-test`: now handles CRLF linebreaks correctly (#471).
 
    * A record field can be projected from an array index expression (#473).
+
+   * Futhark will now never automatically pick Apple's CPU device for
+     OpenCL, as it is rather broken.  You can still select it
+     manually (#475).
+
+   * Fixes to `set_bit` functions in the math module (#476).
 
 ## [0.3.0]
 
