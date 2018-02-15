@@ -44,12 +44,12 @@ runMonoM :: VNameSource -> MonoM a -> (a, VNameSource)
 runMonoM src (MonoM m) = (a, src')
   where (a, src', _) = evalState (runRWST m mempty src) mempty
 
-lookupVar :: VName -> MonoM PolyBinding
-lookupVar vn = do
+lookupVar :: SrcLoc -> VName -> MonoM PolyBinding
+lookupVar loc vn = do
   env <- ask
   case M.lookup vn env of
     Just valbind -> return valbind
-    Nothing -> error $ "Unknown variable " ++ pretty vn
+    Nothing -> error $ "Unknown variable " ++ pretty vn ++ " at " ++ locStr loc
 
 -- | Mapping from function name and instance list to a new function name in case
 -- the function has already been instantiated with those concrete types.
@@ -103,10 +103,11 @@ transformExp (Range e1 me incl tp loc) = do
 transformExp e@Empty{} = return e
 
 transformExp e@(Var (QualName qs fname) (Info (il, ps, ret)) loc)
-  | null il   = return e  -- If the instance list is empty, the variable
-                          -- does not refer to a polymorphic function.
+  | null il = return e  -- If the instance list is empty, the variable
+                        -- does not refer to a polymorphic function.
+  | baseTag fname <= maxIntrinsicTag = return e
   | otherwise = do
-      funbind <- lookupVar fname
+      funbind <- lookupVar loc fname
       maybe_fname <- lookupLifted fname il
       fname' <- case maybe_fname of
                   Just x -> return x  -- The function has alread been
