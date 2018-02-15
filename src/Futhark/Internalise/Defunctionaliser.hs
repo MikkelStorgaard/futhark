@@ -54,15 +54,16 @@ runDefM :: VNameSource -> DefM a -> (a, VNameSource, [Dec])
 runDefM src (DefM m) = runRWS m emptyEnv src
 
 -- | Looks up the associated static value for a given name in the environment.
-lookupVar :: VName -> DefM StaticVal
-lookupVar x = do
+lookupVar :: SrcLoc -> VName -> DefM StaticVal
+lookupVar loc x = do
   env <- ask
   case lookup x env of
     Just sv -> return sv
     Nothing -- If the variable is unknown, it may refer to the 'intrinsics'
             -- module, which we will have to treat specially.
       | baseTag x <= maxIntrinsicTag -> return IntrinsicSV
-      | otherwise -> error $ "Variable " ++ pretty x ++ " is out of scope."
+      | otherwise -> error $ "Variable " ++ pretty x ++ " at "
+                          ++ locStr loc ++ " is out of scope."
 
 -- | Defunctionalization of an expression. Returns the residual expression and
 -- the associated static value in the defunctionalization monad.
@@ -92,7 +93,7 @@ defuncExp (RecordLit fs loc) = do
           (e', sv) <- defuncExp e
           return (RecordFieldExplicit vn e' loc', (vn, sv))
         defuncField (RecordFieldImplicit vn _ loc') = do
-          sv <- lookupVar vn
+          sv <- lookupVar loc' vn
           case sv of
             -- If the implicit field refers to a dynamic function, we
             -- convert it to an explicit field with a record closing over
@@ -119,7 +120,7 @@ defuncExp e@Empty{} =
   return (e, Dynamic $ typeOf e)
 
 defuncExp (Var qn _ loc) = do
-  sv <- lookupVar (qualLeaf qn)
+  sv <- lookupVar loc (qualLeaf qn)
   case sv of
     -- If the variable refers to a dynamic function, we return its closure
     -- representation (i.e., a record expression capturing the free variables
@@ -131,18 +132,16 @@ defuncExp (Var qn _ loc) = do
 defuncExp (Ascript e0 _ _) = defuncExp e0
 
 defuncExp (LetPat tparams pat e1 e2 loc) = do
-  when (any isTypeParam tparams) $
-    error $ expectedMonomorphic "let-binding"
-  (e1', sv1) <- defuncExp e1
+  let env_dim = envFromShapeParams tparams
+  (e1', sv1) <- local (env_dim `combineEnv`) $ defuncExp e1
   let env  = matchPatternSV pat sv1
       pat' = updatePattern pat sv1
   (e2', sv2) <- local (env `combineEnv`) $ defuncExp e2
   return (LetPat tparams pat' e1' e2' loc, sv2)
 
 defuncExp (LetFun vn (tparams, pats, _, rettype, e1) e2 loc) = do
-  when (any isTypeParam tparams) $
-    error $ expectedMonomorphic "let-bound function"
-  (pats', e1', sv1) <- defuncLet pats e1 rettype
+  let env_dim = envFromShapeParams tparams
+  (pats', e1', sv1) <- local (env_dim `combineEnv`) $ defuncLet pats e1 rettype
   (e2', sv2) <- local (extendEnv vn sv1) $ defuncExp e2
   case pats' of
     []  -> let t1 = vacuousShapeAnnotations $ typeOf e1'
@@ -218,7 +217,7 @@ defuncExp (Project vn e0 tp@(Info tp') loc) = do
 
 defuncExp (LetWith id1 id2 idxs e1 body loc) = do
   e1' <- defuncExp' e1
-  sv1 <- lookupVar $ identName id2
+  sv1 <- lookupVar (identSrcLoc id2) $ identName id2
   idxs' <- mapM defuncDimIndex idxs
   (body', sv) <- local (extendEnv (identName id1) sv1) $ defuncExp body
   return (LetWith id1 id2 idxs' e1' body' loc, sv)
@@ -253,16 +252,34 @@ defuncExp e@(Rotate i e1 e2 loc) = do
   e2' <- defuncExp' e2
   return (Rotate i e1' e2' loc, Dynamic $ typeOf e)
 
-defuncExp expr@(Map e1 es tp loc) = do
-  e1' <- defuncSoacExp e1
+defuncExp e@(Map fun es tp loc) = do
+  fun' <- defuncSoacExp fun
   es' <- mapM defuncExp' es
-  return (Map e1' es' tp loc, Dynamic $ typeOf expr)
+  return (Map fun' es' tp loc, Dynamic $ typeOf e)
 
-defuncExp Reduce{}    = undefined
-defuncExp Scan{}      = undefined
-defuncExp Filter{}    = undefined
-defuncExp Partition{} = undefined
-defuncExp Stream{}    = undefined
+defuncExp e@(Reduce comm fun ne arr loc) = do
+  fun' <- defuncSoacExp fun
+  ne' <- defuncExp' ne
+  arr' <- defuncExp' arr
+  return (Reduce comm fun' ne' arr' loc, Dynamic $ typeOf e)
+
+defuncExp e@(Scan fun ne arr loc) = do
+  fun' <- defuncSoacExp fun
+  ne' <- defuncExp' ne
+  arr' <- defuncExp' arr
+  return (Scan fun' ne' arr' loc, Dynamic $ typeOf e)
+
+defuncExp e@(Filter fun arr loc) = do
+  fun' <- defuncSoacExp fun
+  arr' <- defuncExp' arr
+  return (Filter fun' arr' loc, Dynamic $ typeOf e)
+
+defuncExp e@(Partition funs arr loc) = do
+  funs' <- mapM defuncSoacExp funs
+  arr' <- defuncExp' arr
+  return (Partition funs' arr' loc, Dynamic $ typeOf e)
+
+defuncExp e@Stream{} = return (e, Dynamic $ typeOf e)
 
 defuncExp e@(Zip i e1 es tp uniq loc) = do
   e1' <- defuncExp' e1
@@ -298,9 +315,9 @@ etaExpand e = do
     return (Id x (Info $ vacuousShapeAnnotations t) noLoc,
             Var (qualName x) (Info ([], [], t)) noLoc)
   let ps_st = map (vacuousShapeAnnotations . toStruct) ps
-      e' = foldl (\e1 (e2, t2, argtypes) ->
-                    Apply e1 e2 (Info $ diet t2)
-                    (Info (argtypes, ret)) noLoc)
+      e' = foldl' (\e1 (e2, t2, argtypes) ->
+                     Apply e1 e2 (Info $ diet t2)
+                     (Info (argtypes, ret)) noLoc)
            e $ zip3 vars ps (drop 1 $ tails ps_st)
   return (pats, e', vacuousShapeAnnotations $ toStruct ret)
 
@@ -376,7 +393,7 @@ defuncApply depth e@(Apply e1 e2 d (Info (argtypes, _)) loc) = do
               ++ "nor a dynamic function, but has static value: " ++ show sv1
 
 defuncApply depth e@(Var qn (Info (_, argtypes, _)) loc) = do
-    sv <- lookupVar (qualLeaf qn)
+    sv <- lookupVar loc (qualLeaf qn)
     case sv of
       DynamicFun _ _
         | fullyApplied sv depth ->
@@ -436,6 +453,14 @@ envFromPattern pat = case pat of
   Id vn (Info t) _      -> [(vn, Dynamic $ removeShapeAnnotations t)]
   Wildcard _ _          -> mempty
   PatternAscription p _ -> envFromPattern p
+
+-- | Create an environment that binds the shape parameters.
+envFromShapeParams :: [TypeParamBase VName] -> Env
+envFromShapeParams = map envEntry
+  where envEntry (TypeParamDim vn _)     = (vn, Dynamic . Prim $ Signed Int32)
+        envEntry p@(TypeParamType _ loc) = error $
+          "The defunctionalizer expects a monomorphic input program, but it\n" ++
+          "received a type parameter " ++ pretty p ++ " at " ++ locStr loc ++ "."
 
 -- | Create a new top-level value declaration with the given function name,
 -- return type, list of parameters, and body expression.
@@ -614,13 +639,13 @@ expectedMonomorphic msg =
   \defunctionalizer expects a monomorphic input program."
 
 -- | Defunctionalize a top-level value binding. Returns the transformed result
--- as well as a function that extends the environment with a binding form the
+-- as well as a function that extends the environment with a binding from the
 -- bound name to the static value of the transformed body.
 defuncValBind :: ValBind -> DefM (ValBind, Env -> Env)
 defuncValBind valbind@(ValBind _ name _ rettype tparams params body _ _) = do
-  when (any isTypeParam tparams) $
-    error $ expectedMonomorphic "top-level value declaration"
-  (params', body', sv) <- defuncLet params body rettype
+  let env = envFromShapeParams tparams
+  (params', body', sv) <- local (env `combineEnv`) $
+                          defuncLet params body rettype
   let rettype' = vacuousShapeAnnotations . toStruct $ typeOf body'
   return ( valbind { valBindRetDecl = Nothing
                    , valBindRetType = Info rettype'

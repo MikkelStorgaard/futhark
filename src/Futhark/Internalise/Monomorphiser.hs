@@ -19,8 +19,9 @@ import           Language.Futhark.Traversals
 import           Language.Futhark.TypeChecker.Types
 
 -- | The monomorphization monad reads 'PolyBinding's and writes 'MonoBinding's.
+-- The 'TypeParam's in a 'MonoBinding' can only be shape parameters.
 newtype PolyBinding = PolyBinding (VName, [TypeParam], [Pattern], StructType, Exp)
-newtype MonoBinding = MonoBinding (VName, [Pattern], StructType, Exp)
+newtype MonoBinding = MonoBinding (VName, [TypeParam], [Pattern], StructType, Exp)
 
 type InstanceList = [TypeBase () ()]
 
@@ -253,8 +254,8 @@ transformDimIndex (DimSlice me1 me2 me3) =
 -- monomorphic functions with the given expression at the bottom.
 unfoldLetFuns :: [MonoBinding] -> Exp -> Exp
 unfoldLetFuns [] e = e
-unfoldLetFuns (MonoBinding (fname, params, rettype, body) : rest) e =
-  LetFun fname ([], params, Nothing, Info rettype, body) e' noLoc
+unfoldLetFuns (MonoBinding (fname, dim_params, params, rettype, body) : rest) e =
+  LetFun fname (dim_params, params, Nothing, Info rettype, body) e' noLoc
   where e' = unfoldLetFuns rest e
 
 -- | Monomorphize a polymorphic function at the types given in the instance
@@ -267,10 +268,11 @@ monomorphizeBinding (PolyBinding (name, tparams, params, rettype, body)) il = do
   body' <- updateExpTypes body
   name' <- newName name
   body'' <- transformExp body'
-  let monobind = MonoBinding (name', params', rettype', body'')
+  let monobind = MonoBinding (name', shape_params, params', rettype', body'')
   return (name', monobind)
 
-  where tnames = map typeParamName $ filter isTypeParam tparams
+  where (type_params, shape_params) = partition isTypeParam tparams
+        tnames = map typeParamName type_params
         substs = M.fromList $ zip tnames il
         substs_ct = M.map fromStruct substs
         substs_st = M.map vacuousShapeAnnotations substs
@@ -302,12 +304,12 @@ toPolyBinding (ValBind _ name _ (Info rettype) tparams params body _ _) =
   PolyBinding (name, tparams, params, rettype, body)
 
 toValBinding :: MonoBinding -> ValBind
-toValBinding (MonoBinding (name, params, rettype, body)) =
+toValBinding (MonoBinding (name, shape_params, params, rettype, body)) =
   ValBind { valBindEntryPoint = False
           , valBindName       = name
           , valBindRetDecl    = Nothing
           , valBindRetType    = Info rettype
-          , valBindTypeParams = []
+          , valBindTypeParams = shape_params
           , valBindParams     = params
           , valBindBody       = body
           , valBindDoc        = Nothing
