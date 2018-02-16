@@ -136,7 +136,7 @@ defuncExp (LetPat tparams pat e1 e2 loc) = do
   (e1', sv1) <- local (env_dim `combineEnv`) $ defuncExp e1
   let env  = matchPatternSV pat sv1
       pat' = updatePattern pat sv1
-  (e2', sv2) <- local (env `combineEnv`) $ defuncExp e2
+  (e2', sv2) <- local ((env `combineEnv` env_dim) `combineEnv`) $ defuncExp e2
   return (LetPat tparams pat' e1' e2' loc, sv2)
 
 defuncExp (LetFun vn (tparams, pats, _, rettype, e1) e2 loc) = do
@@ -162,7 +162,9 @@ defuncExp (Negate e0 loc) = do
   return (Negate e0' loc, sv)
 
 defuncExp expr@(Lambda tparams pats e0 decl tp loc) = do
-  when (any isTypeParam tparams) $ error $ expectedMonomorphic "lambda"
+  when (any isTypeParam tparams) $
+    error $ "Received a lambda with type parameters at " ++ locStr loc
+         ++ ", but the defunctionalizer expects a monomorphic input program."
   -- Extract the first parameter of the lambda and "push" the
   -- remaining ones (if there are any) into the body of the lambda.
   let (pat, e0') = case pats of
@@ -188,7 +190,7 @@ defuncExp expr@(OpSectionRight qn e tps tp loc) = do
   return (OpSectionRight qn e' tps tp loc, Dynamic $ typeOf expr)
 
 defuncExp (DoLoop tparams pat e1 form e3 loc) = do
-  when (any isTypeParam tparams) $ error $ expectedMonomorphic "loop"
+  let env_dim = envFromShapeParams tparams
   (e1', sv1) <- defuncExp e1
   let env1 = matchPatternSV pat sv1
   (form', env2) <- case form of
@@ -196,9 +198,11 @@ defuncExp (DoLoop tparams pat e1 form e3 loc) = do
                         return (For ident e2', [(identName ident, sv2)])
     ForIn pat2 e2 -> do (e2', sv2) <- defuncExp e2
                         return (ForIn pat2 e2', matchPatternSV pat2 sv2)
-    While e2      -> do e2' <- defuncExp' e2
+    While e2      -> do e2' <- local ((env1 `combineEnv` env_dim) `combineEnv`) $
+                               defuncExp' e2
                         return (While e2', [])
-  (e3', sv) <- local ((env1 `combineEnv` env2) `combineEnv`) $ defuncExp e3
+  (e3', sv) <- local ((env1 `combineEnv` env2 `combineEnv` env_dim) `combineEnv`) $
+               defuncExp e3
   return (DoLoop tparams pat e1' form' e3' loc, sv)
 
 defuncExp (BinOp qn (e1, d1) (e2, d2) t@(Info t') loc) = do
@@ -647,11 +651,6 @@ patternVars (PatternParens pat _)     = patternVars pat
 patternVars (Id vn _ _)               = S.singleton vn
 patternVars (Wildcard _ _)            = mempty
 patternVars (PatternAscription pat _) = patternVars pat
-
-expectedMonomorphic :: String -> String
-expectedMonomorphic msg =
-  "Received a " ++ msg ++ " with type parameters, but the \
-  \defunctionalizer expects a monomorphic input program."
 
 -- | Defunctionalize a top-level value binding. Returns the transformed result
 -- as well as a function that extends the environment with a binding from the
