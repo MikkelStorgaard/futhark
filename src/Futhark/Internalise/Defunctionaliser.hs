@@ -301,11 +301,26 @@ defuncExp' = fmap fst . defuncExp
 -- | Defunctionalize the function argument to a SOAC by eta-expanding if
 -- necessary and then defunctionalizing the body of the introduced lambda.
 defuncSoacExp :: Exp -> DefM Exp
-defuncSoacExp e = do
-  (pats, body, tp) <- etaExpand e
-  let env = foldMap envFromPattern pats
-  body' <- local (env `combineEnv`) $ defuncExp' body
-  return $ Lambda [] pats body' Nothing (Info tp) noLoc
+defuncSoacExp e@OpSection{}      = return e
+defuncSoacExp e@OpSectionLeft{}  = return e
+defuncSoacExp e@OpSectionRight{} = return e
+
+defuncSoacExp (Parens e loc) =
+  Parens <$> defuncSoacExp e <*> pure loc
+
+defuncSoacExp (Lambda tparams params e0 decl tp loc) = do
+  let env_dim = envFromShapeParams tparams
+      env = foldMap envFromPattern params
+  e0' <- local ((env `combineEnv` env_dim) `combineEnv`) $ defuncSoacExp e0
+  return $ Lambda tparams params e0' decl tp loc
+
+defuncSoacExp e
+  | Arrow{} <- typeOf e = do
+      (pats, body, tp) <- etaExpand e
+      let env = foldMap envFromPattern pats
+      body' <- local (env `combineEnv`) $ defuncExp' body
+      return $ Lambda [] pats body' Nothing (Info tp) noLoc
+  | otherwise = defuncExp' e
 
 etaExpand :: Exp -> DefM ([Pattern], Exp, StructType)
 etaExpand e = do

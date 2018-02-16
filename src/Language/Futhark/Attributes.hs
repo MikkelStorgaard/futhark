@@ -423,12 +423,13 @@ typeOf (Empty _ (Info t) _) = t
 typeOf (BinOp _ _ _ (Info t) _) = t
 typeOf (Project _ _ (Info t) _) = t
 typeOf (If _ _ _ (Info t) _) = t
+typeOf (Var _ (Info (_, ts, ret@Record{})) _) =
+  foldFunType ts ret
 typeOf (Var qn (Info (_, ts, ret)) _) =
-  foldr (Arrow mempty Nothing . removeShapeAnnotations . fromStruct) ret ts
-  `addAliases` S.insert (qualLeaf qn)
+  foldFunType ts (ret `addAliases` S.insert (qualLeaf qn))
 typeOf (Ascript e _ _) = typeOf e
 typeOf (Apply _ _ _ (Info (ts, ret)) _) =
-  foldr (Arrow mempty Nothing . removeShapeAnnotations . fromStruct) ret ts
+  foldFunType ts ret
 typeOf (Negate e _) = typeOf e
 typeOf (LetPat _ _ _ body _) = typeOf body
 typeOf (LetFun _ _ body _) = typeOf body
@@ -451,7 +452,8 @@ typeOf (Unzip _ ts _) =
 typeOf (Unsafe e _) =
   typeOf e
 typeOf (Map _ _ (Info t) _) = t
-typeOf (Reduce _ fun _ _ _) = typeOf fun
+typeOf (Reduce _ _ _ arr _) =
+  stripArray 1 (typeOf arr) `setAliases` mempty
 typeOf (Scan _ _ arr _) = typeOf arr `setAliases` mempty
 typeOf (Filter _ arr _) = typeOf arr
 typeOf (Partition funs arr _) =
@@ -468,6 +470,10 @@ typeOf (Lambda _ _ _ _ (Info t) _) =
 typeOf (OpSection _ _ _ (Info t) _)      = toStruct t `setAliases` mempty
 typeOf (OpSectionLeft _ _ _ (Info t) _)  = toStruct t `setAliases` mempty
 typeOf (OpSectionRight _ _ _ (Info t) _) = toStruct t `setAliases` mempty
+
+foldFunType :: [StructType] -> CompType -> CompType
+foldFunType ps ret =
+  foldr (Arrow mempty Nothing . removeShapeAnnotations . fromStruct) ret ps
 
 -- | The result of applying the arguments of the given types to a
 -- function with the given return type, consuming its parameters with
