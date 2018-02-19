@@ -402,11 +402,6 @@ rank n = ShapeDecl $ replicate n ()
 
 -- | The type of an Futhark term.  The aliasing will refer to itself, if
 -- the term is a non-tuple-typed variable.
---
--- HACK: For terms that are really in a function position (such as the
--- functional argument to a @Map@), the type will be the *return
--- type*, even if the function is not fully applied.  This will change
--- once Futhark gets proper support for higher-order functions.
 typeOf :: ExpBase Info VName -> CompType
 typeOf (Literal val _) = Prim $ primValueType val
 typeOf (Parens e _) = typeOf e
@@ -465,8 +460,9 @@ typeOf (Stream form lam _ _) =
 typeOf (Concat _ x _ _) =
   typeOf x `setUniqueness` Unique `setAliases` S.empty
 typeOf (DoLoop _ pat _ _ _ _) = patternType pat
-typeOf (Lambda _ _ _ _ (Info t) _) =
-  removeShapeAnnotations t `setAliases` mempty
+typeOf (Lambda _ params _ _ (Info t) _) =
+  (removeShapeAnnotations $ foldr (uncurry (Arrow ()) . patternParam) t params)
+  `setAliases` mempty
 typeOf (OpSection _ _ _ (Info t) _)      = toStruct t `setAliases` mempty
 typeOf (OpSectionLeft _ _ _ (Info t) _)  = toStruct t `setAliases` mempty
 typeOf (OpSectionRight _ _ _ (Info t) _) = toStruct t `setAliases` mempty

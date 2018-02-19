@@ -5,6 +5,7 @@ module Language.Futhark.TypeChecker.Types
 
   , unifyTypes
   , subtypeOf
+  , subuniqueOf
   , similarTo
   , require
 

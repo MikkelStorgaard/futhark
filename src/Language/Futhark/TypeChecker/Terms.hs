@@ -139,20 +139,19 @@ envToTermScope env = TermScope vtable (envTypeTable env) (envNameMap env)
 
 -- | Mapping from fresh type variables, instantiated from the type schemes of
 -- polymorphic functions, to specific types as determined on application.
-type Substs = M.Map VName (TypeBase () ())
+type Substs = M.Map VName (TypeBase () (), SrcLoc)
 
-addSubst :: VName -> TypeBase () () -> TermTypeM ()
-addSubst vn tp = do
+addSubst :: SrcLoc -> VName -> TypeBase () () -> TermTypeM ()
+addSubst loc vn tp = do
   substs <- get
   case M.lookup vn substs of
-    Nothing -> put $ M.insert vn tp substs
-    Just tp'
+    Nothing -> put $ M.insert vn (tp, loc) substs
+    Just (tp', loc')
       | Just _ <- unifyTypes tp tp' -> return ()
-      | otherwise -> throwError $ TypeError noLoc $
-                     "Argument determines type parameter '" ++
-                     pretty (baseName vn) ++ "' as " ++ pretty tp ++
-                     ", but it was previously determined to be " ++
-                     pretty tp' ++ "."
+      | otherwise ->
+          throwError $ TypeError noLoc $ "Argument determines type parameter '" ++
+          pretty (baseName vn) ++ "' as " ++ pretty tp ++ ", but it was previously " ++
+          "determined to be " ++ pretty tp' ++ " at " ++ locStr loc' ++ "."
 
 newtype TermTypeM a = TermTypeM (RWST
                                  TermScope
@@ -979,8 +978,7 @@ checkExp (Lambda tparams params body maybe_retdecl NoInfo loc) =
     (maybe_retdecl'', rettype) <- case maybe_retdecl' of
       Just retdecl'@(TypeDecl _ (Info st)) -> return (Just retdecl', st)
       Nothing -> return (Nothing, vacuousShapeAnnotations . toStruct $ typeOf body')
-    let ftype = foldr (uncurry (Arrow ()) . patternParam) rettype params'
-    return $ Lambda tparams' params' body' maybe_retdecl'' (Info ftype) loc
+    return $ Lambda tparams' params' body' maybe_retdecl'' (Info rettype) loc
 
 checkExp e@OpSection{} =
   throwError $ TypeError (srclocOf e)
@@ -1191,11 +1189,11 @@ checkArg arg = do
 checkApply :: SrcLoc -> CompType -> Arg
            -> TermTypeM (StructType, [StructType], CompType)
 checkApply loc (Arrow as _ tp1 tp2) (argtype, dflow, argloc) = do
-  instantiate (toStruct tp1) (toStruct argtype)
+  instantiate loc (toStruct tp1) (toStruct argtype)
   let (paramtypes, rettype) = unfoldFunType tp2
 
   -- Perform substitutions of instantiated variables in the types.
-  substs <- gets $ M.map fromStruct
+  substs <- gets $ M.map (fromStruct . fst)
   let rettype' = substTypesAny substs rettype
       (tp1' : paramtypes') =
         map (vacuousShapeAnnotations .
@@ -1227,10 +1225,10 @@ checkFuncall maybe_fname loc ftype args = do
     pretty (length args) ++ " arguments."
 
   -- Instantiate the parameter types in case the function is polymorphic.
-  zipWithM_ instantiate (map toStructural pts)
-                        (map (toStructural . argType) args)
+  zipWithM_ (instantiate loc) (map toStructural pts)
+                              (map (toStructural . argType) args)
 
-  substs <- gets $ M.map (vacuousShapeAnnotations . fromStruct)
+  substs <- gets $ M.map (vacuousShapeAnnotations . fromStruct . fst)
   let pts' = map (substTypesAny substs) pts
       ret' = substTypesAny substs ret
       (pts'', rem_params) = splitAt (length args) pts'
@@ -1523,28 +1521,29 @@ onlySelfAliasing = local (\scope -> scope { scopeVtable = M.mapWithKey set $ sco
 
 -- | Instantiates the type variables of a polymorphic function, and creates
 -- new bindings in the state for the substitutions that are determined.
-instantiate :: TypeBase () () -> TypeBase () () -> TermTypeM ()
-instantiate (Prim t1) (Prim t2)
+instantiate :: SrcLoc -> TypeBase () () -> TypeBase () () -> TermTypeM ()
+instantiate _ (Prim t1) (Prim t2)
   | t1 == t2 = return ()
-instantiate (Record fs) (Record arg_fs)
+instantiate loc (Record fs) (Record arg_fs)
   | M.keys fs == M.keys arg_fs =
-      mapM_ (uncurry instantiate) $ M.intersectionWith (,) fs arg_fs
-instantiate (TypeVar (TypeName _ tn) targs) (TypeVar (TypeName _ arg_tn) arg_targs)
+      mapM_ (uncurry $ instantiate loc) $ M.intersectionWith (,) fs arg_fs
+instantiate loc (TypeVar (TypeName _ tn) targs) (TypeVar (TypeName _ arg_tn) arg_targs)
   | tn == arg_tn, length targs == length arg_targs =
       zipWithM_ instantiateTypeArg targs arg_targs
 
   where instantiateTypeArg TypeArgDim{} TypeArgDim{} = return ()
         instantiateTypeArg (TypeArgType t _) (TypeArgType arg_t _) =
-          instantiate t arg_t
-        instantiateTypeArg _ _ = throwError $ TypeError noLoc
+          instantiate loc t arg_t
+        instantiateTypeArg _ _ = throwError $ TypeError loc
           "Cannot instantiate a type argument with a dimension argument (or vice versa)."
 
-instantiate (TypeVar tyname []) arg_t =
-  addSubst (typeLeaf tyname) arg_t
-instantiate (Arrow _ _ t1 t1') (Arrow _ _ t2 t2') =
-  instantiate t1 t2 >> instantiate t1' t2'
-instantiate (Array et shape _) arg_t@Array{}
-  | Just arg_t' <- peelArray (shapeRank shape) arg_t =
+instantiate loc (TypeVar tyname []) arg_t =
+  addSubst loc (typeLeaf tyname) arg_t
+instantiate loc (Arrow _ _ t1 t1') (Arrow _ _ t2 t2') =
+  instantiate loc t1 t2 >> instantiate loc t1' t2'
+instantiate loc (Array et shape u) arg_t@(Array _ _ p_u)
+  | Just arg_t' <- peelArray (shapeRank shape) arg_t,
+    p_u `subuniqueOf` u =
       instantiateArrayElemType et arg_t'
 
   where instantiateArrayElemType (ArrayPrimElem pt ()) (Prim arg_pt)
@@ -1554,20 +1553,20 @@ instantiate (Array et shape _) arg_t@Array{}
               mapM_ (uncurry instantiateRecordArrayElemType) $
               M.intersectionWith (,) fs arg_fs
         instantiateArrayElemType (ArrayPolyElem tn [] ()) arg_t' =
-          instantiate (TypeVar tn []) arg_t'
+          instantiate loc (TypeVar tn []) arg_t'
         instantiateArrayElemType et' arg_t' =
-          throwError $ TypeError noLoc $
+          throwError $ TypeError loc $
           "Could not instantiate array element type " ++ pretty et' ++
           " with argument type " ++ pretty arg_t'
 
         instantiateRecordArrayElemType (RecordArrayElem et') arg_t' =
           instantiateArrayElemType et' arg_t'
         instantiateRecordArrayElemType (RecordArrayArrayElem et' shape' u') arg_t' =
-          instantiate (Array et' shape' u') arg_t'
+          instantiate loc (Array et' shape' u') arg_t'
 
-instantiate t arg_t = throwError $ TypeError noLoc $
-                      "Argument of type " ++ pretty arg_t ++
-                      " passed for parameter of type " ++ pretty t
+instantiate loc t arg_t = throwError $ TypeError loc $
+                          "Argument of type " ++ pretty arg_t ++
+                          " passed for parameter of type " ++ pretty t
 
 -- | Extract the parameter types and return type from a type.
 -- If the type is not an arrow type, the list of parameter types is empty.
@@ -1582,7 +1581,7 @@ unfoldFunType t = ([], t)
 -- annotations (including the instance lists) of an expression.
 updateExpTypes :: Exp -> TermTypeM Exp
 updateExpTypes e = do
-  substs <- get
+  substs <- gets (M.map fst)
   let substs_ct = M.map fromStruct substs
       substs_st = M.map vacuousShapeAnnotations substs
       substs_pt = M.map vacuousShapeAnnotations substs_ct
