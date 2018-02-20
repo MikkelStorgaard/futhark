@@ -13,6 +13,7 @@ import Control.Monad.Writer
 import Control.Monad.State
 import Control.Monad.RWS
 import qualified Control.Monad.Fail as Fail
+import Data.Bifunctor
 import Data.List
 import Data.Loc
 import Data.Maybe
@@ -137,21 +138,23 @@ envToTermScope env = TermScope vtable (envTypeTable env) (envNameMap env)
   where vtable = M.map valBinding $ envVtable env
         valBinding (TypeM.BoundV tps v) = BoundV tps $ v `setAliases` mempty
 
--- | Mapping from fresh type variables, instantiated from the type schemes of
--- polymorphic functions, to specific types as determined on application.
+-- | Mapping from fresh type variables, instantiated from the type
+-- schemes of polymorphic functions, to specific types as determined
+-- on application and the location of that application.
 type Substs = M.Map VName (TypeBase () (), SrcLoc)
 
 addSubst :: SrcLoc -> VName -> TypeBase () () -> TermTypeM ()
 addSubst loc vn tp = do
-  substs <- get
+  substs <- gets $ M.map $ first $ applySubst (M.fromList [(vn, tp)])
   case M.lookup vn substs of
     Nothing -> put $ M.insert vn (tp, loc) substs
     Just (tp', loc')
       | Just _ <- unifyTypes tp tp' -> return ()
       | otherwise ->
-          throwError $ TypeError noLoc $ "Argument determines type parameter '" ++
+          throwError $ TypeError loc $ "Argument determines type parameter '" ++
           pretty (baseName vn) ++ "' as " ++ pretty tp ++ ", but it was previously " ++
           "determined to be " ++ pretty tp' ++ " at " ++ locStr loc' ++ "."
+
 
 newtype TermTypeM a = TermTypeM (RWST
                                  TermScope
@@ -335,7 +338,7 @@ unifyExpTypes e1 e2 =
   maybe (throwError $ UnifyError
          (srclocOf e1) (toStructural t1)
          (srclocOf e2) (toStructural t2)) return $
-  unifyTypes (typeOf e1) (typeOf e2)
+  unifyTypes t1 t2
   where t1 = typeOf e1
         t2 = typeOf e2
 
@@ -613,7 +616,7 @@ checkExp (BinOp op (e1,_) (e2,_) NoInfo loc) = do
   (op', _, ftype) <- lookupFunction op (argType e1_arg) loc
 
   ([e1_pt, e2_pt], rettype') <-
-    checkFuncall (Just op) loc ftype [e1_arg, e2_arg]
+    checkFuncall loc ftype [e1_arg, e2_arg]
   return $ BinOp op' (e1', diet e1_pt) (e2', diet e2_pt)
     (Info $ removeShapeAnnotations rettype') loc
 
@@ -1193,11 +1196,11 @@ checkApply loc (Arrow as _ tp1 tp2) (argtype, dflow, argloc) = do
   let (paramtypes, rettype) = unfoldFunType tp2
 
   -- Perform substitutions of instantiated variables in the types.
-  substs <- gets $ M.map (fromStruct . fst)
-  let rettype' = substTypesAny substs rettype
+  substs <- gets $ M.map fst
+  let rettype' = applySubst substs rettype
       (tp1' : paramtypes') =
         map (vacuousShapeAnnotations .
-             toStruct . substTypesAny substs) (tp1 : paramtypes)
+             toStruct . applySubst substs) (tp1 : paramtypes)
 
   occur [observation as loc]
 
@@ -1212,42 +1215,28 @@ checkApply loc ftype arg =
   "Attempt to apply an expresion of type " ++ pretty ftype ++
   " to an argument of type " ++ pretty (argType arg) ++ "."
 
-checkFuncall :: Maybe (QualName Name) -> SrcLoc -> PatternType -> [Arg]
-             -> TermTypeM ([StructType], TypeBase (DimDecl VName) Names)
-checkFuncall maybe_fname loc ftype args = do
-  (pts, ret) <- case getType ftype of
-                  Left (pts', ret') -> pure (map snd pts', ret')
-                  Right _ -> throwError $ TypeError loc "Not a function."
+checkFuncall :: SrcLoc -> PatternType -> [Arg]
+             -> TermTypeM ([StructType], PatternType)
+checkFuncall _ ftype [] = return ([], ftype)
+checkFuncall loc ftype ((argtype, dflow, argloc) : args) = do
+  substs <- gets $ M.map fst
+  case ftype of
+    Arrow as _ t1 t2 -> do
+      instantiate loc (toStructural t1) (toStruct argtype)
+      let t1' = toStruct $ applySubst substs t1
+          t2' = applySubst substs t2
 
-  unless (length args <= length pts) $
-    throwError $ TypeError loc $ prefix $
-    "expecting " ++ pretty (length pts) ++ " arguments, but got " ++
-    pretty (length args) ++ " arguments."
+      occur [observation as loc]
+      maybeCheckOccurences dflow
+      let occurs = consumeArg argloc argtype (diet t1')
+      occur $ dflow `seqOccurences` occurs
 
-  -- Instantiate the parameter types in case the function is polymorphic.
-  zipWithM_ (instantiate loc) (map toStructural pts)
-                              (map (toStructural . argType) args)
+      (ps, ret) <- checkFuncall loc t2' args
+      return (t1' : ps, ret)
 
-  substs <- gets $ M.map (vacuousShapeAnnotations . fromStruct . fst)
-  let pts' = map (substTypesAny substs) pts
-      ret' = substTypesAny substs ret
-      (pts'', rem_params) = splitAt (length args) pts'
-      paramtypes = map toStruct pts''
-      rettype = toStruct $ foldr (Arrow mempty Nothing) ret' rem_params
-
-  occur [observation (aliases ftype) loc]
-
-  let diets = map diet paramtypes
-  forM_ (zip diets args) $ \(d, (t, dflow, argloc)) -> do
-    maybeCheckOccurences dflow
-    let occurs = consumeArg argloc t d
-    occur $ dflow `seqOccurences` occurs
-
-  return (paramtypes,
-          returnType rettype diets (map argType args))
-  where
-    prefix = (("In call of function " ++ fname ++ ": ")++)
-    fname = maybe "anonymous function" pretty maybe_fname
+    _ -> throwError $ TypeError loc $
+         "Attempt to apply an expression of type " ++ pretty ftype ++
+         " to an argument of type " ++ pretty argtype
 
 consumeArg :: SrcLoc -> CompType -> Diet -> [Occurence]
 consumeArg loc (Record ets) (RecordDiet ds) =
@@ -1374,7 +1363,7 @@ checkFunExp (Lambda tparams params body maybe_ret NoInfo loc) args
                    Nothing -> vacuousShapeAnnotations $ typeOf body' `setAliases` ()
                    Just (TypeDecl _ (Info ret)) -> ret
           lamt = foldr (Arrow () Nothing . patternStructType) ret' params' `setAliases` mempty
-      (_, ret'') <- checkFuncall Nothing loc lamt args
+      (_, ret'') <- checkFuncall loc lamt args
       return (Lambda tparams' params' body' maybe_ret' (Info $ toStruct ret'') loc,
               removeShapeAnnotations $ toStruct ret'')
   | otherwise = throwError $ TypeError loc $ "Anonymous function defined with " ++
@@ -1384,7 +1373,7 @@ checkFunExp (Lambda tparams params body maybe_ret NoInfo loc) args
 checkFunExp (OpSection op NoInfo NoInfo NoInfo loc) args
   | [x_arg,y_arg] <- args = do
   (op', _, ftype) <- lookupFunction op (argType x_arg) loc
-  (paramtypes', rettype') <- checkFuncall Nothing loc ftype [x_arg,y_arg]
+  (paramtypes', rettype') <- checkFuncall loc ftype [x_arg,y_arg]
 
   case paramtypes' of
     [x_t, y_t] ->
@@ -1427,15 +1416,15 @@ checkFunExp e args = do
     [] -> error "Function expression in SOAC with no arguments."
     (arg : _) -> lookupFunction fname (argType arg) loc
 
-  (paramtypes', rettype') <- checkFuncall Nothing loc ftype all_args
+  (paramtypes, rettype) <- checkFuncall loc ftype all_args
 
-  case find (unique . snd) $ zip curryargexps paramtypes' of
+  case find (unique . snd) $ zip curryargexps paramtypes of
     Just (arg, _) -> throwError $ CurriedConsumption fname $ srclocOf arg
     _             -> return ()
 
-  let rettype'' = removeShapeAnnotations rettype'
-  e' <- constructFuncall loc fname' instance_list curryargexps' paramtypes' rettype''
-  return (e', rettype'' `setAliases` mempty)
+  let rettype' = removeShapeAnnotations rettype
+  e' <- constructFuncall loc fname' instance_list curryargexps' paramtypes rettype'
+  return (e', rettype' `setAliases` mempty)
   where loc = srclocOf e
 
 checkCurryBinOp :: ((Arg,Arg) -> (Arg,Arg))
@@ -1445,7 +1434,7 @@ checkCurryBinOp arg_ordering binop x loc y_arg = do
   (x', x_arg) <- checkArg x
   let (first_arg, second_arg) = arg_ordering (x_arg, y_arg)
   (binop', _, fun) <- lookupFunction binop (argType first_arg) loc
-  ([xt, yt], rettype) <- checkFuncall Nothing loc fun [first_arg,second_arg]
+  ([xt, yt], rettype) <- checkFuncall loc fun [first_arg,second_arg]
   return (x', binop', xt, yt, removeShapeAnnotations rettype)
 
 --- Consumption
@@ -1539,8 +1528,12 @@ instantiate loc (TypeVar (TypeName _ tn) targs) (TypeVar (TypeName _ arg_tn) arg
 
 instantiate loc (TypeVar tyname []) arg_t =
   addSubst loc (typeLeaf tyname) arg_t
-instantiate loc (Arrow _ _ t1 t1') (Arrow _ _ t2 t2') =
-  instantiate loc t1 t2 >> instantiate loc t1' t2'
+instantiate loc param_t (TypeVar tyname []) =
+  addSubst loc (typeLeaf tyname) param_t
+instantiate loc (Arrow _ _ t1 t1') (Arrow _ _ t2 t2') = do
+  instantiate loc t1 t2
+  subs <- gets $ M.map fst
+  instantiate loc (applySubst subs t1') (applySubst subs t2')
 instantiate loc (Array et shape u) arg_t@(Array _ _ p_u)
   | Just arg_t' <- peelArray (shapeRank shape) arg_t,
     p_u `subuniqueOf` u =
@@ -1575,22 +1568,17 @@ unfoldFunType (Arrow _ _ t1 t2) = let (ps, r) = unfoldFunType t2
                                   in (t1 : ps, r)
 unfoldFunType t = ([], t)
 
-
-
 -- | Perform substitutions of instantiated variables on the type
 -- annotations (including the instance lists) of an expression.
 updateExpTypes :: Exp -> TermTypeM Exp
 updateExpTypes e = do
-  substs <- gets (M.map fst)
-  let substs_ct = M.map fromStruct substs
-      substs_st = M.map vacuousShapeAnnotations substs
-      substs_pt = M.map vacuousShapeAnnotations substs_ct
-      tv = ASTMapper { mapOnExp         = astMap tv
+  substs <- gets $ M.map fst
+  let tv = ASTMapper { mapOnExp         = astMap tv
                      , mapOnName        = pure
                      , mapOnQualName    = pure
-                     , mapOnType        = pure . substTypesAny substs
-                     , mapOnCompType    = pure . substTypesAny substs_ct
-                     , mapOnStructType  = pure . substTypesAny substs_st
-                     , mapOnPatternType = pure . substTypesAny substs_pt
+                     , mapOnType        = pure . applySubst substs
+                     , mapOnCompType    = pure . applySubst substs
+                     , mapOnStructType  = pure . applySubst substs
+                     , mapOnPatternType = pure . applySubst substs
                      }
   astMap tv e

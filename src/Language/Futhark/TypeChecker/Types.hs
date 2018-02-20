@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleContexts, FlexibleInstances #-}
 module Language.Futhark.TypeChecker.Types
   ( checkTypeExp
   , checkTypeDecl
@@ -24,6 +24,7 @@ module Language.Futhark.TypeChecker.Types
 
   , arrayOfM
 
+  , Substitutable(..)
   , substTypesAny
   )
 where
@@ -560,6 +561,23 @@ arrayOfM :: (MonadTypeChecker m, Pretty (ShapeDecl dim), ArrayDim dim, Monoid as
 arrayOfM loc t shape u = maybe nope return $ arrayOf t shape u
   where nope = throwError $ TypeError loc $
                "Cannot form an array with elements of type " ++ pretty t
+
+-- | Class of types which allow for substitution of types with no
+-- annotations for type variable names.
+class Substitutable a where
+  applySubst :: M.Map VName (TypeBase () ()) -> a -> a
+
+instance Substitutable (TypeBase () ()) where
+  applySubst = substTypesAny
+
+instance Substitutable (TypeBase () Names) where
+  applySubst = substTypesAny . M.map fromStruct
+
+instance Substitutable (TypeBase (DimDecl VName) ()) where
+  applySubst = substTypesAny . M.map vacuousShapeAnnotations
+
+instance Substitutable (TypeBase (DimDecl VName) Names) where
+  applySubst = substTypesAny . M.map (vacuousShapeAnnotations . fromStruct)
 
 -- | Perform substitutions, from type names to types, on a type. Works
 -- regardless of what shape and uniqueness information is attached to the type.
