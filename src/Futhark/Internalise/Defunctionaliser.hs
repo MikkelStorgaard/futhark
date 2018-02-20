@@ -7,6 +7,7 @@ module Futhark.Internalise.Defunctionaliser
   ) where
 
 import           Control.Monad.RWS
+import           Data.Bifunctor
 import           Data.List
 import           Data.Loc
 import qualified Data.Map.Strict as M
@@ -510,14 +511,13 @@ typeFromSV :: StaticVal -> CompType
 typeFromSV (Dynamic tp)           = tp
 typeFromSV (LambdaSV _ _ env)     = typeFromEnv env
 typeFromSV (RecordSV ls)          = Record . M.fromList $
-                                    map (\(vn, sv) -> (vn, typeFromSV sv)) ls
+                                    map (second typeFromSV) ls
 typeFromSV (DynamicFun (_, sv) _) = typeFromSV sv
 typeFromSV IntrinsicSV            = error $ "Tried to get the type from the "
                                          ++ "static value of an intrinsic."
 
 typeFromEnv :: Env -> CompType
-typeFromEnv = Record . M.fromList .
-              map (\(vn, sv) -> (baseName vn, typeFromSV sv))
+typeFromEnv = Record . M.fromList . map (bimap baseName typeFromSV)
 
 -- | Construct the type for a fully-applied dynamic function from its
 -- static value and the original types of its arguments.
