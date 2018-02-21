@@ -1212,7 +1212,7 @@ checkApply loc (Arrow as _ tp1 tp2) (argtype, dflow, argloc) = do
 
 checkApply loc ftype arg =
   throwError $ TypeError loc $
-  "Attempt to apply an expresion of type " ++ pretty ftype ++
+  "Attempt to apply an expression of type " ++ pretty ftype ++
   " to an argument of type " ++ pretty (argType arg) ++ "."
 
 checkFuncall :: SrcLoc -> PatternType -> [Arg]
@@ -1236,7 +1236,7 @@ checkFuncall loc ftype ((argtype, dflow, argloc) : args) = do
 
     _ -> throwError $ TypeError loc $
          "Attempt to apply an expression of type " ++ pretty ftype ++
-         " to an argument of type " ++ pretty argtype
+         " to an argument of type " ++ pretty argtype ++ "."
 
 consumeArg :: SrcLoc -> CompType -> Diet -> [Occurence]
 consumeArg loc (Record ets) (RecordDiet ds) =

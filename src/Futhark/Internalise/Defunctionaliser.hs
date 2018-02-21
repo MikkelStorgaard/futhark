@@ -130,7 +130,10 @@ defuncExp (Var qn _ loc) = do
     _ -> let tp = typeFromSV sv
          in return (Var qn (Info ([], [], tp)) loc, sv)
 
-defuncExp (Ascript e0 _ _) = defuncExp e0
+defuncExp (Ascript e0 tydecl loc)
+  | order (typeOf e0) == 0 = do (e0', sv) <- defuncExp e0
+                                return (Ascript e0' tydecl loc, sv)
+  | otherwise = defuncExp e0
 
 defuncExp (LetPat tparams pat e1 e2 loc) = do
   let env_dim = envFromShapeParams tparams
@@ -146,9 +149,9 @@ defuncExp (LetFun vn (tparams, pats, _, rettype, e1) e2 loc) = do
   (e2', sv2) <- local (extendEnv vn sv1) $ defuncExp e2
   case pats' of
     []  -> let t1 = vacuousShapeAnnotations $ typeOf e1'
-           in return (LetPat [] (Id vn (Info t1) noLoc) e1' e2' loc, sv2)
+           in return (LetPat tparams (Id vn (Info t1) noLoc) e1' e2' loc, sv2)
     _:_ -> let t1 = vacuousShapeAnnotations . toStruct $ typeOf e1'
-           in return (LetFun vn ([], pats', Nothing, Info t1, e1') e2' loc, sv2)
+           in return (LetFun vn (tparams, pats', Nothing, Info t1, e1') e2' loc, sv2)
 
 defuncExp (If e1 e2 e3 tp loc) = do
   (e1', _ ) <- defuncExp e1
@@ -556,12 +559,16 @@ updatePattern (RecordPattern ps loc) (RecordSV svs)
                                 (n, updatePattern p sv)) ps' svs') loc
 updatePattern (PatternParens pat loc) sv =
   PatternParens (updatePattern pat sv) loc
-updatePattern (Id vn _ loc) sv =
-  Id vn (Info . vacuousShapeAnnotations $ typeFromSV sv) loc
-updatePattern (Wildcard _ loc) sv =
-  Wildcard (Info . vacuousShapeAnnotations $ typeFromSV sv) loc
-updatePattern (PatternAscription pat _) sv =
-  updatePattern pat sv
+updatePattern pat@(Id vn (Info tp) loc) sv
+  | order tp == 0 = pat
+  | otherwise = Id vn (Info . vacuousShapeAnnotations $ typeFromSV sv) loc
+updatePattern pat@(Wildcard (Info tp) loc) sv
+  | order tp == 0 = pat
+  | otherwise = Wildcard (Info . vacuousShapeAnnotations $ typeFromSV sv) loc
+updatePattern (PatternAscription pat tydecl) sv
+  | (order . unInfo $ expandedType tydecl) == 0 =
+      PatternAscription (updatePattern pat sv) tydecl
+  | otherwise = updatePattern pat sv
 updatePattern pat (Dynamic t) = updatePattern pat (svFromType t)
 updatePattern pat sv =
   error $ "Tried to update pattern " ++ pretty pat
