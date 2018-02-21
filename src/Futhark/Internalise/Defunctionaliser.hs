@@ -195,16 +195,17 @@ defuncExp (DoLoop tparams pat e1 form e3 loc) = do
   (e1', sv1) <- defuncExp e1
   let env1 = matchPatternSV pat sv1
   (form', env2) <- case form of
-    For ident e2  -> do (e2', sv2) <- defuncExp e2
-                        return (For ident e2', [(identName ident, sv2)])
-    ForIn pat2 e2 -> do (e2', sv2) <- defuncExp e2
-                        return (ForIn pat2 e2', matchPatternSV pat2 sv2)
+    For ident e2  -> do e2' <- defuncExp' e2
+                        return (For ident e2', envFromIdent ident)
+    ForIn pat2 e2 -> do e2' <- defuncExp' e2
+                        return (ForIn pat2 e2', envFromPattern pat2)
     While e2      -> do e2' <- local ((env1 `combineEnv` env_dim) `combineEnv`) $
                                defuncExp' e2
                         return (While e2', [])
   (e3', sv) <- local ((env1 `combineEnv` env2 `combineEnv` env_dim) `combineEnv`) $
                defuncExp e3
   return (DoLoop tparams pat e1' form' e3' loc, sv)
+  where envFromIdent (Ident vn (Info tp) _) = [(vn, Dynamic tp)]
 
 defuncExp (BinOp qn (e1, d1) (e2, d2) t@(Info t') loc) = do
   e1' <- defuncExp' e1
