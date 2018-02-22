@@ -660,6 +660,50 @@ patternVars (Id vn _ _)               = S.singleton vn
 patternVars (Wildcard _ _)            = mempty
 patternVars (PatternAscription pat _) = patternVars pat
 
+-- | Combine the shape information of types as much as possible. The first
+-- argument is the orignal type and the second is the type of the transformed
+-- expression. This is necessary since the original type may contain additional
+-- information (e.g., shape restrictions) from the user given annotation.
+combineTypeShapes :: ArrayDim dim =>
+                     TypeBase dim as -> TypeBase dim as -> TypeBase dim as
+combineTypeShapes (Record ts1) (Record ts2) =
+  Record $ M.map (uncurry combineTypeShapes) (M.intersectionWith (,) ts1 ts2)
+combineTypeShapes (Array et1 shape1 _) (Array et2 shape2 new_u)
+  | Just new_shape <- unifyShapes shape1 shape2 =
+      Array (combineElemTypeInfo et1 et2) new_shape new_u
+combineTypeShapes (TypeVar _ targs1) (TypeVar tn targs2) =
+  TypeVar tn $ zipWith combineArgs targs1 targs2
+  where combineArgs (TypeArgDim d1 _) (TypeArgDim d2 loc)
+          | Just new_dim <- unifyDims d1 d2 = TypeArgDim new_dim loc
+        combineArgs _ targ = targ
+-- Keep the original type if the type of the transformed exprssion is a type
+-- variable. This is to avoid types becomming opaque when they should not be and
+-- relies on the assumption that a type variable cannot (yet) be an arrow.
+combineTypeShapes orig_tp TypeVar{} = orig_tp
+combineTypeShapes _ new_tp = new_tp
+
+combineElemTypeInfo :: ArrayDim dim =>
+                       ArrayElemTypeBase dim as
+                    -> ArrayElemTypeBase dim as -> ArrayElemTypeBase dim as
+combineElemTypeInfo (ArrayRecordElem et1) (ArrayRecordElem et2) =
+  ArrayRecordElem $ M.map (uncurry combineRecordArrayTypeInfo)
+                          (M.intersectionWith (,) et1 et2)
+combineElemTypeInfo orig_tp ArrayPolyElem{} = orig_tp
+combineElemTypeInfo _ new_tp = new_tp
+
+combineRecordArrayTypeInfo :: ArrayDim dim =>
+                              RecordArrayElemTypeBase dim as
+                           -> RecordArrayElemTypeBase dim as
+                           -> RecordArrayElemTypeBase dim as
+combineRecordArrayTypeInfo (RecordArrayElem et1) (RecordArrayElem et2) =
+  RecordArrayElem $ combineElemTypeInfo et1 et2
+combineRecordArrayTypeInfo (RecordArrayArrayElem et1 shape1 _)
+                           (RecordArrayArrayElem et2 shape2 new_u)
+  | Just new_shape <- unifyShapes shape1 shape2 =
+      RecordArrayArrayElem (combineElemTypeInfo et1 et2) new_shape new_u
+combineRecordArrayTypeInfo _ new_tp = new_tp
+
+
 -- | Defunctionalize a top-level value binding. Returns the transformed result
 -- as well as a function that extends the environment with a binding from the
 -- bound name to the static value of the transformed body.
@@ -670,7 +714,7 @@ defuncValBind valbind@(ValBind _ name _ rettype tparams params body _ _) = do
                           defuncLet params body rettype
   let rettype' = vacuousShapeAnnotations . toStruct $ typeOf body'
   return ( valbind { valBindRetDecl = Nothing
-                   , valBindRetType = Info rettype'
+                   , valBindRetType = Info $ combineTypeShapes (unInfo rettype) rettype'
                    , valBindParams  = params'
                    , valBindBody    = body'
                    }
