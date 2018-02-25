@@ -692,12 +692,12 @@ addTiming statements =
 compileUnOp :: Imp.UnOp -> String
 compileUnOp op =
   case op of
-    Not -> "not"
+    Not -> "!"
     Complement{} -> "~"
-    Abs{} -> "abs"
-    FAbs{} -> "abs"
-    SSignum{} -> "ssignum"
-    USignum{} -> "usignum"
+    Abs{} -> "MathUtils.Abs" -- actually write these helpers
+    FAbs{} -> "MathUtils.Abs"
+    SSignum{} -> "MathUtils.SSignum"
+    USignum{} -> "MathUtils.USignum"
 
 compileBinOpLike :: Monad m =>
                     Imp.Exp -> Imp.Exp
@@ -750,6 +750,19 @@ compilePrimToCs t =
     FloatType Float64 -> "Convert.ToDouble"
     Imp.Bool -> "Convert.ToBool"
     Cert -> "Convert.ToByte"
+
+-- | Select function to retrieve bytes from byte array as specific data type
+compileBitConverter :: PrimType -> String
+compileBitConverter t =
+  case t of
+    IntType Int8 -> undefined
+    IntType Int16 -> "BitConverter.ToInt16"
+    IntType Int32 -> "BitConverter.ToInt32"
+    IntType Int64 -> "BitConverter.ToInt64"
+    FloatType Float32 -> "BitConverter.ToSingle"
+    FloatType Float64 -> "BitConverter.ToDouble"
+    Imp.Bool -> "BitConverter.ToBool"
+    Cert -> undefined
 
 -- | The ctypes type corresponding to a 'PrimType', taking sign into account.
 compilePrimToExtCs :: PrimType -> Imp.Signedness -> String
@@ -805,8 +818,8 @@ compileExp (Imp.LeafExp (Imp.SizeOf t) _) =
 compileExp (Imp.LeafExp (Imp.Index src (Imp.Count iexp) bt DefaultSpace _) _) = do
   iexp' <- compileExp iexp
   let bt' = compilePrimType bt
-  let nptype = compilePrimToNp bt
-  return $ simpleCall "indexArray" [Var $ compileName src, iexp', Var bt', Var nptype]
+  let indexFunction = compilePrimToNp bt
+  return $ simpleCall indexFunction [Var $ compileName src, iexp']
 
 compileExp (Imp.LeafExp (Imp.Index src (Imp.Count iexp) restype (Imp.Space space) _) _) =
   join $ asks envReadScalar
@@ -879,9 +892,9 @@ compileCode (Imp.For i it bound body) = do
   body' <- collect $ compileCode body
   counter <- pretty <$> newVName "counter"
   one <- pretty <$> newVName "one"
-  stm $ Assign (Var i') $ simpleCall (compilePrimToNp (IntType it)) [Integer 0]
-  stm $ Assign (Var one) $ simpleCall (compilePrimToNp (IntType it)) [Integer 1]
-  stm $ For counter (simpleCall "range" [bound']) $
+  stm $ Assign (Var i') $ simpleCall (compilePrimToCs (IntType it)) [Integer 0]
+  stm $ Assign (Var one) $ simpleCall (compilePrimToCs (IntType it)) [Integer 1]
+  stm $ For counter (simpleCall "Enumerable.Range" [Integer 0, bound']) $
     body' ++ [AssignOp "+" (Var i') (Var one)]
 
 compileCode (Imp.SetScalar vname exp1) = do
@@ -895,12 +908,7 @@ compileCode (Imp.DeclareScalar v Cert) =
 compileCode Imp.DeclareScalar{} = return ()
 
 compileCode (Imp.DeclareArray name DefaultSpace t vs) = do
-  atInit $ Assign (Field (Var "self") name') $
-    simpleCall "unwrapArray"
-    [Call (Var "np.array")
-      [Arg $ List $ map compilePrimValue vs,
-       ArgKeyword "dtype" $ Var $ compilePrimToNp t]]
-  stm $ Assign (Var name') $ Field (Var "self") name'
+  atInit $ Assign name' $ DeclareArray (compilePrimType t) (map compilePrimValue vs)
   where name' = compileName name
 
 compileCode (Imp.DeclareArray name (Space space) t vs) =
@@ -919,9 +927,7 @@ compileCode (Imp.Assert e msg (loc,locs)) = do
 compileCode (Imp.Call dests fname args) = do
   args' <- mapM compileArg args
   let dests' = tupleOrSingle $ fmap Var (map compileName dests)
-      fname'
-        | isBuiltInFunction fname = futharkFun (pretty  fname)
-        | otherwise               = "self." ++ futharkFun (pretty  fname)
+      fname' = futharkFun (pretty fname)
       call' = simpleCall fname' args'
   -- If the function returns nothing (is called only for side
   -- effects), take care not to assign to an empty tuple.
@@ -938,7 +944,7 @@ compileCode (Imp.SetMem dest src _) = do
 
 compileCode (Imp.Allocate name (Imp.Count e) DefaultSpace) = do
   e' <- compileExp e
-  let allocate' = simpleCall "allocateMem" [e']
+  let allocate' = DeclareArray (compilePrimType $ IntType Int8) [e']
   let name' = Var (compileName name)
   stm $ Assign name' allocate'
 
@@ -954,9 +960,7 @@ compileCode (Imp.Copy dest (Imp.Count destoffset) DefaultSpace src (Imp.Count sr
   let dest' = Var (compileName dest)
   let src' = Var (compileName src)
   size' <- compileExp size
-  let offset_call1 = simpleCall "addressOffset" [dest', destoffset', Var "ct.c_byte"]
-  let offset_call2 = simpleCall "addressOffset" [src', srcoffset', Var "ct.c_byte"]
-  stm $ Exp $ simpleCall "ct.memmove" [offset_call1, offset_call2, size']
+  stm $ Exp $ simpleCall "Array.Copy" [src', srcoffset', dest', destoffset', size']
 
 compileCode (Imp.Copy dest (Imp.Count destoffset) destspace src (Imp.Count srcoffset) srcspace (Imp.Count size)) = do
   copy <- asks envCopy
@@ -969,9 +973,9 @@ compileCode (Imp.Write dest (Imp.Count idx) elemtype DefaultSpace _ elemexp) = d
   idx' <- compileExp idx
   elemexp' <- compileExp elemexp
   let dest' = Var $ compileName dest
-  let elemtype' = compilePrimType elemtype
+  let elemtype' = compilePrimToCs elemtype
   let ctype = simpleCall elemtype' [elemexp']
-  stm $ Exp $ simpleCall "writeScalarArray" [dest', idx', ctype]
+  stm $ Exp $ SetValue dest' idx' ctype
 
 compileCode (Imp.Write dest (Imp.Count idx) elemtype (Imp.Space space) _ elemexp) =
   join $ asks envWriteScalar
