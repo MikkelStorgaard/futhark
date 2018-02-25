@@ -14,8 +14,6 @@ module Futhark.CodeGen.Backends.GenericCSharp
   , compilePrimValue
   , compilePrimType
   , compilePrimTypeExt
-  , compilePrimToNp
-  , compilePrimToExtNp
 
   , Operations (..)
   , defaultOperations
@@ -233,8 +231,8 @@ paramsTypes = map paramType
   where paramType (Imp.MemParam _ space) = Imp.Mem (Imp.ConstSize 0) space
         paramType (Imp.ScalarParam _ t) = Imp.Scalar t
 
-compileOutput :: [Imp.Param] -> [PyExp]
-compileOutput = map (Var . compileName . Imp.paramName)
+compileOutput :: [Imp.Param] -> [(CSharpExp, CSharpType)]
+compileOutput = bimap (Var . compileName . Imp.paramName) (compileType . Imp.paramType)
 
 runCompilerM :: Imp.Functions op -> Operations op s
              -> VNameSource
@@ -293,83 +291,31 @@ constructorToFunDef (Constructor params body) at_init =
   Def "__init__" params $ body <> at_init
 
 compileProg :: MonadFreshNames m =>
-               Maybe String
-            -> Constructor
-            -> [PyStmt]
-            -> [PyStmt]
-            -> Operations op s
-            -> s
-            -> [PyStmt]
-            -> [Option]
             -> Imp.Functions op
             -> m String
-compileProg module_name constructor imports defines ops userstate pre_timing options prog@(Imp.Functions funs) = do
+
+compileProg prog@(Imp.Functions funs) = do
   src <- getNameSource
-  let prog' = runCompilerM prog ops src userstate compileProg'
-      maybe_shebang =
-        case module_name of Nothing -> "#!/usr/bin/env python\n"
-                            Just _  -> ""
-  return $ maybe_shebang ++
-    pretty (PyProg $ imports ++
-            [Import "argparse" Nothing] ++
-            defines ++
-            [Escape pyUtility] ++
-            prog')
+  let prog' = runCompilerM prog compileProg'
+
+  return $ pretty (CSharpProg prog')
   where compileProg' = do
           definitions <- mapM compileFunc funs
-          at_inits <- gets compInit
+          return $ ClassDef (Class "main" $ map FunDef definitions)
 
-          let constructor' = constructorToFunDef constructor at_inits
-
-          case module_name of
-            Just name -> do
-              entry_points <- mapM compileEntryFun $ filter (Imp.functionEntry . snd) funs
-              return [ClassDef $ Class name $ map FunDef $
-                      constructor' : definitions ++ entry_points]
-            Nothing -> do
-              let classinst = Assign (Var "self") $ simpleCall "internal" []
-              (entry_point_defs, entry_point_names, entry_points) <-
-                unzip3 <$> mapM (callEntryFun pre_timing)
-                (filter (Imp.functionEntry . snd) funs)
-              return (parse_options ++
-                      ClassDef (Class "internal" $ map FunDef $
-                                constructor' : definitions) :
-                      classinst :
-                      map FunDef entry_point_defs ++
-                      selectEntryPoint entry_point_names entry_points)
-
-        parse_options =
-          Assign (Var "runtime_file") None :
-          Assign (Var "do_warmup_run") (Bool False) :
-          Assign (Var "num_runs") (Integer 1) :
-          Assign (Var "entry_point") (String "main") :
-          generateOptionParser (standardOptions ++ options)
-
-        selectEntryPoint entry_point_names entry_points =
-          [ Assign (Var "entry_points") $
-              Dict $ zip (map String entry_point_names) entry_points,
-            Assign (Var "entry_point_fun") $
-              simpleCall "entry_points.get" [Var "entry_point"],
-            If (BinOp "==" (Var "entry_point_fun") None)
-              [Exp $ simpleCall "sys.exit"
-                  [Call (Field
-                          (String "No entry point '{}'.  Select another with --entry point.  Options are:\n{}")
-                          "format")
-                    [Arg $ Var "entry_point",
-
-                     Arg $ Call (Field (String "\n") "join")
-                     [Arg $ simpleCall "entry_points.keys" []]]]]
-              [Exp $ simpleCall "entry_point_fun" []]
-          ]
-
-compileFunc :: (Name, Imp.Function op) -> CompilerM op s PyFunDef
+compileFunc :: (Name, Imp.Function op) -> CompilerM op s CSharpFunDef
 compileFunc (fname, Imp.Function _ outputs inputs body _ _) = do
   body' <- collect $ compileCode body
-  let inputs' = map (compileName . Imp.paramName) inputs
-  let ret = Return $ tupleOrSingle $ compileOutput outputs
-  return $ Def (futharkFun . nameToString $ fname) ("self" : inputs') (body'++[ret])
+  let inputs' = map compileTypedInput inputs
+  let outputs' = compileOutput outputs
+  let retType = tupleOrSingle $ map snd outputs'
+  let ret = Return $ tupleOrSingle outputs'
+  return $ Def (futharkFun . nameToString $ fname) retType inputs' (body'++[ret])
+  where compileTypedInput = bimap nameFun typeFun
+        nameFun = (compileName . Imp.paramName)
+        typeFun = (compileType . Imp.paramType)
 
-tupleOrSingle :: [PyExp] -> PyExp
+tupleOrSingle :: [CSharpExp] -> CSharpExp
 tupleOrSingle [e] = e
 tupleOrSingle es = Tuple es
 
@@ -380,6 +326,16 @@ simpleCall fname = Call (Var fname) . map Arg
 
 compileName :: VName -> String
 compileName = zEncodeString . pretty
+
+compileType :: PrimType -> CSharpPrim
+compileType (IntType Int8) = CSharpIntT CSharpByte
+compileType (IntType Int16) = CSharpIntT CSharpShort
+compileType (IntType Int32) = CSharpIntT CSharpInt
+compileType (IntType Int64) = CSharpIntT CSharpLong
+compileType (FloatType Float32) = CSharpFloatT CSharpFloat
+compileType (FloatType Float64) = CSharpFloatT CSharpDouble
+compileType Bool = CSharpBool
+compileType _ = undefined
 
 compileDim :: Imp.DimSize -> PyExp
 compileDim (Imp.ConstSize i) = Integer $ toInteger i
@@ -745,7 +701,7 @@ compileUnOp op =
 
 compileBinOpLike :: Monad m =>
                     Imp.Exp -> Imp.Exp
-                 -> CompilerM op s (PyExp, PyExp, String -> m PyExp)
+                 -> CompilerM op s (CSharpExp, CSharpExp, String -> m CSharpExp)
 compileBinOpLike x y = do
   x' <- compileExp x
   y' <- compileExp y
@@ -756,87 +712,87 @@ compileBinOpLike x y = do
 compilePrimType :: PrimType -> String
 compilePrimType t =
   case t of
-    IntType Int8 -> "ct.c_int8"
-    IntType Int16 -> "ct.c_int16"
-    IntType Int32 -> "ct.c_int32"
-    IntType Int64 -> "ct.c_int64"
-    FloatType Float32 -> "ct.c_float"
-    FloatType Float64 -> "ct.c_double"
-    Imp.Bool -> "ct.c_bool"
-    Cert -> "ct.c_bool"
+    IntType Int8 -> "byte"
+    IntType Int16 -> "short"
+    IntType Int32 -> "int"
+    IntType Int64 -> "long"
+    FloatType Float32 -> "float"
+    FloatType Float64 -> "double"
+    Imp.Bool -> "bool"
+    Cert -> "bool"
 
 -- | The ctypes type corresponding to a 'PrimType', taking sign into account.
 compilePrimTypeExt :: PrimType -> Imp.Signedness -> String
 compilePrimTypeExt t ept =
   case (t, ept) of
-    (IntType Int8, Imp.TypeUnsigned) -> "ct.c_uint8"
-    (IntType Int16, Imp.TypeUnsigned) -> "ct.c_uint16"
-    (IntType Int32, Imp.TypeUnsigned) -> "ct.c_uint32"
-    (IntType Int64, Imp.TypeUnsigned) -> "ct.c_uint64"
-    (IntType Int8, _) -> "ct.c_int8"
-    (IntType Int16, _) -> "ct.c_int16"
-    (IntType Int32, _) -> "ct.c_int32"
-    (IntType Int64, _) -> "ct.c_int64"
-    (FloatType Float32, _) -> "ct.c_float"
-    (FloatType Float64, _) -> "ct.c_double"
-    (Imp.Bool, _) -> "ct.c_bool"
-    (Cert, _) -> "ct.c_byte"
+    (IntType Int8, Imp.TypeUnsigned) -> "byte"
+    (IntType Int16, Imp.TypeUnsigned) -> "ushort"
+    (IntType Int32, Imp.TypeUnsigned) -> "uint"
+    (IntType Int64, Imp.TypeUnsigned) -> "ulong"
+    (IntType Int8, _) -> "sbyte"
+    (IntType Int16, _) -> "short"
+    (IntType Int32, _) -> "int"
+    (IntType Int64, _) -> "long"
+    (FloatType Float32, _) -> "float"
+    (FloatType Float64, _) -> "double"
+    (Imp.Bool, _) -> "bool"
+    (Cert, _) -> "byte"
 
--- | The Numpy type corresponding to a 'PrimType'.
-compilePrimToNp :: Imp.PrimType -> String
-compilePrimToNp bt =
-  case bt of
-    IntType Int8 -> "np.int8"
-    IntType Int16 -> "np.int16"
-    IntType Int32 -> "np.int32"
-    IntType Int64 -> "np.int64"
-    FloatType Float32 -> "np.float32"
-    FloatType Float64 -> "np.float64"
-    Imp.Bool -> "np.byte"
-    Cert -> "np.byte"
+-- | The ctypes type corresponding to a 'PrimType'.
+compilePrimToCs :: PrimType -> String
+compilePrimToCs t =
+  case t of
+    IntType Int8 -> "Convert.ToByte"
+    IntType Int16 -> "Convert.ToInt16"
+    IntType Int32 -> "Convert.ToInt32"
+    IntType Int64 -> "Convert.ToInt64"
+    FloatType Float32 -> "Convert.ToSingle"
+    FloatType Float64 -> "Convert.ToDouble"
+    Imp.Bool -> "Convert.ToBool"
+    Cert -> "Convert.ToByte"
 
--- | The Numpy type corresponding to a 'PrimType', taking sign into account.
-compilePrimToExtNp :: Imp.PrimType -> Imp.Signedness -> String
-compilePrimToExtNp bt ept =
-  case (bt,ept) of
-    (IntType Int8, Imp.TypeUnsigned) -> "np.uint8"
-    (IntType Int16, Imp.TypeUnsigned) -> "np.uint16"
-    (IntType Int32, Imp.TypeUnsigned) -> "np.uint32"
-    (IntType Int64, Imp.TypeUnsigned) -> "np.uint64"
-    (IntType Int8, _) -> "np.int8"
-    (IntType Int16, _) -> "np.int16"
-    (IntType Int32, _) -> "np.int32"
-    (IntType Int64, _) -> "np.int64"
-    (FloatType Float32, _) -> "np.float32"
-    (FloatType Float64, _) -> "np.float64"
-    (Imp.Bool, _) -> "np.bool"
-    (Cert, _) -> "np.byte"
+-- | The ctypes type corresponding to a 'PrimType', taking sign into account.
+compilePrimToExtCs :: PrimType -> Imp.Signedness -> String
+compilePrimToExtCs t ept =
+  case (t, ept) of
+    (IntType Int8, Imp.TypeUnsigned) -> "Convert.ToByte"
+    (IntType Int16, Imp.TypeUnsigned) -> "Convert.ToUInt16"
+    (IntType Int32, Imp.TypeUnsigned) -> "Convert.ToUInt32"
+    (IntType Int64, Imp.TypeUnsigned) -> "Convert.ToUInt64"
+    (IntType Int8 , _) -> "Convert.ToSByte"
+    (IntType Int16 , _) -> "Convert.ToInt16"
+    (IntType Int32 , _) -> "Convert.ToInt32"
+    (IntType Int64 , _) -> "Convert.ToInt64"
+    (FloatType Float32 , _) -> "Convert.ToSingle"
+    (FloatType Float64 , _) -> "Convert.ToDouble"
+    (Imp.Bool , _) -> "Convert.ToBool"
+    (Cert , _) -> "Convert.ToByte"
 
-compilePrimValue :: Imp.PrimValue -> PyExp
+compilePrimValue :: Imp.PrimValue -> CSharpExp
 compilePrimValue (IntValue (Int8Value v)) =
-  simpleCall "np.int8" [Integer $ toInteger v]
+  simpleCall "Convert.ToByte" [Integer $ toInteger v]
 compilePrimValue (IntValue (Int16Value v)) =
-  simpleCall "np.int16" [Integer $ toInteger v]
+  simpleCall "Convert.ToInt16" [Integer $ toInteger v]
 compilePrimValue (IntValue (Int32Value v)) =
-  simpleCall "np.int32" [Integer $ toInteger v]
+  simpleCall "Convert.ToInt32" [Integer $ toInteger v]
 compilePrimValue (IntValue (Int64Value v)) =
-  simpleCall "np.int64" [Integer $ toInteger v]
+  simpleCall "Convert.ToInt64" [Integer $ toInteger v]
 compilePrimValue (FloatValue (Float32Value v))
   | isInfinite v =
-      if v > 0 then Var "np.inf" else Var "-np.inf"
+      if v > 0 then Var "Single.PositiveInfinity" else Var "Single.NegativeInfinity"
   | isNaN v =
-      Var "np.nan"
-  | otherwise = simpleCall "np.float32" [Float $ fromRational $ toRational v]
+      Var "Single.NaN"
+  | otherwise = simpleCall "Convert.ToSingle" [Float $ fromRational $ toRational v]
 compilePrimValue (FloatValue (Float64Value v))
   | isInfinite v =
-      if v > 0 then Var "np.inf" else Var "-np.inf"
+      if v > 0 then Var "Double.PositiveInfinity" else Var "Double.NegativeInfinity"
   | isNaN v =
-      Var "np.nan"
-  | otherwise = simpleCall "np.float64" [Float $ fromRational $ toRational v]
+      Var "Double.NaN"
+  | otherwise = simpleCall "Convert.ToDouble" [Float $ fromRational $ toRational v]
 compilePrimValue (BoolValue v) = Bool v
 compilePrimValue Checked = Var "True"
 
-compileExp :: Imp.Exp -> CompilerM op s PyExp
+compileExp :: Imp.Exp -> CompilerM op s CSharpExp
 
 compileExp (Imp.ValueExp v) = return $ compilePrimValue v
 
@@ -844,7 +800,7 @@ compileExp (Imp.LeafExp (Imp.ScalarVar vname) _) =
   return $ Var $ compileName vname
 
 compileExp (Imp.LeafExp (Imp.SizeOf t) _) =
-  return $ simpleCall (compilePrimToNp $ IntType Int32) [Integer $ primByteSize t]
+  return $ simpleCall (compilePrimToCs $ IntType Int32) [Integer $ primByteSize t]
 
 compileExp (Imp.LeafExp (Imp.Index src (Imp.Count iexp) bt DefaultSpace _) _) = do
   iexp' <- compileExp iexp
@@ -871,8 +827,8 @@ compileExp (Imp.BinOpExp op x y) = do
     And{} -> simple "&"
     Or{} -> simple "|"
     Shl{} -> simple "<<"
-    LogAnd{} -> simple "and"
-    LogOr{} -> simple "or"
+    LogAnd{} -> simple "&&"
+    LogOr{} -> simple "||"
     _ -> return $ simpleCall (pretty op) [x', y']
 
 compileExp (Imp.ConvOpExp conv x) = do

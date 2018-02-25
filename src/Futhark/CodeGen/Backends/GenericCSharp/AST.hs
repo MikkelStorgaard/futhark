@@ -34,13 +34,23 @@ instance Pretty CompType where
   ppr (ArrayT t) = ppr t <> text "[]"
   ppr (TupleT ts) = text "Tuple" <> angles $ commasep $ map ppr ts
 
-data BaseT = IntT
-           | DoubleT
-           | FloatT
-           | StringT
-           | CustomT String
-           -- dunno whether to fill on more of the necessary types yet,
-           -- but that can be done eventually
+data CSharpPrim = CSharpInt CSharpIntT
+                | CSharpFloat CSharpFloatT
+                | CSharpBool Bool
+                | CSharpString String
+                | CSharpCustomT String
+                -- dunno whether to fill on more of the necessary types yet,
+                -- but that can be done eventually
+
+data CSharpIntT = Int8
+                | Int16
+                | Int32
+                | Int64
+                deriving (Eq, Show)
+
+data CSharpFloatT = Float
+                  | Double
+                  deriving (Eq, Show)
 
 instance Pretty BaseT where
   ppr IntT = text "int"
@@ -56,7 +66,7 @@ data CSharpType = CompositeType CompT
 
 instance Pretty CSharpType where
   ppr (CompositeType t) = ppr t
-  ppr (PointerType t) = parens $ ppr t <> text "*"
+  ppr (PointerType t) = parens(ppr t <> text "*")
   ppr (BaseType t) = ppr t
 
 data PrivacyType = Blank
@@ -95,7 +105,8 @@ data CSharpExp = Integer Integer
            | String String
            | RawStringLiteral String
            | Var String
-           | Ref MemT String
+           | Ref String
+           | Deref String
            | BinOp String CSharpExp CSharpExp
            | UnOp String CSharpExp
            | Cond CSharpExp CSharpExp CSharpExp
@@ -116,14 +127,19 @@ instance Pretty CSharpExp where
     | isInfinite x = text $ if x > 0 then "Double.PositiveInfinity" else "Double.NegativeInfinity"
     | otherwise = ppr x
   ppr (String x) = text $ show x
-  ppr (RawStringLiteral s)
-
-
+  ppr (RawStringLiteral s) = text "@\"" <> text s <> text "\""
+  ppr (Var n) = text $ map (\x -> if x == '\'' then 'm' else x) n
+  ppr (Ref n) =  text "&" <> text $ map (\x -> if x == '\'' then 'm' else x) n
+  ppr (Deref n) =  text "*" <> text $ map (\x -> if x == '\'' then 'm' else x) n
+  ppr (BinOp s e1 e2) = parens(ppr e1 <+> text s <+> ppr e2)
+  ppr (UnOp s e) = text s <> parens (ppr e)
+  ppr (Cond e1 e2 e3) = text "if" <+> parens(ppr e1) <> braces(ppr e2) <+> text "else" <> braces(ppr e3)
+  ppr (Cast src bt) = parens(ppr bt) <+> ppr src
+  ppr (Index src idx) = ppr src <> ppr idx
 
 data CSharpIdx = IdxRange CSharpExp CSharpExp
                | IdxExp CSharpExp
                deriving (Eq, Show)
-
 
 data CSharpArg = ArgKeyword String CSharpArg'
                | Arg CSharpArg'
@@ -142,8 +158,7 @@ data CSharpStmt = If CSharpExp [CSharpStmt] [CSharpStmt]
 
                 -- Maybe declare type (instead of just assigning a 'var'), and
                 -- maybe cast assignment
-                | Assign PrivacyType [Modifier] (Maybe CSharpType) CSharpExp
-                                                (Maybe CSharpType) CSharpExp
+                | Assign PrivacyType [Modifier] (Maybe CSharpType) CSharpExp CSharpExp
 
                 | AssignOp String CSharpExp CSharpExp
                 | Comment String [CSharpStmt]
@@ -165,8 +180,8 @@ data CSharpStmt = If CSharpExp [CSharpStmt] [CSharpStmt]
 data CSharpExcept = Catch CSharpExp [CSharpStmt]
               deriving (Eq, Show)
 
-type CSharpFunDefArg = (Maybe ArgMemType, CSharpType, String)
-data CSharpFunDef = Def String PrivacyType [Modifier] [CSharpFunDefArg] [CSharpStmt]
+type CSharpFunDefArg = (String, CSharpType)
+data CSharpFunDef = Def String CSharpType [CSharpFunDefArg] [CSharpStmt]
                   deriving (Eq, Show)
 
 data CSharpClassDef = Class PrivacyType [Modifier] [CSharpStmt]
