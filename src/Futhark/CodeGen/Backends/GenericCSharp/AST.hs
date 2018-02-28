@@ -1,3 +1,6 @@
+{-# LANGUAGE PostfixOperators #-}
+
+
 module Futhark.CodeGen.Backends.GenericCSharp.AST
   ( CSharpExp(..)
   , CSharpIdx (..)
@@ -97,6 +100,8 @@ data CSharpExp = Integer Integer
                | Cond CSharpExp CSharpExp CSharpExp
                | Index CSharpExp CSharpIdx
                | Call CSharpExp [CSharpArg]
+               | CallMethod CSharpExp CSharpExp [CSharpArg]
+               | CreateObject CSharpExp [CSharpArg]
                | Cast CSharpExp String
                | Tuple [CSharpExp]
                | Array [CSharpExp]
@@ -136,26 +141,29 @@ data CSharpStmt = If CSharpExp [CSharpStmt] [CSharpStmt]
                 | Try [CSharpStmt] [CSharpExcept]
                 | While CSharpExp [CSharpStmt]
                 | For String CSharpExp [CSharpStmt]
-                | With CSharpExp [CSharpStmt]
+                | Using CSharpExp [CSharpStmt]
                 | Unsafe [CSharpStmt]
                 -- Maybe declare type (instead of just assigning a 'var'), and
                 | Assign CSharpExp CSharpExp
                 | AssignOp String CSharpExp CSharpExp
                 | Comment String [CSharpStmt]
                 | Assert CSharpExp String
-                | Raise CSharpExp
+                | Throw CSharpExp
                 | Exp CSharpExp
                 | Return CSharpExp
                 | Pass
 
                 -- Definition-like statements.
-                | Import String (Maybe String)
+                | Using (Maybe String) String
                 | FunDef CSharpFunDef
                 | ClassDef CSharpClassDef
 
                 -- Some arbitrary string of CSharp code.
                 | Escape String
                 deriving (Eq, Show)
+
+(<;>) :: Doc -> Doc
+(<;>) doc = doc <> semi
 
 instance Pretty CSharpStmt where
   ppr (If cond tbranch fbranch) =
@@ -182,10 +190,43 @@ instance Pretty CSharpStmt where
     rbrace
 
   ppr (For i what body) =
-    text "foreach" <> parens(text "var" <+> text i <+> text "in" <+> ppr what) </>
+    text "foreach" <+> parens(text "var" <+> text i <+> text "in" <+> ppr what) </>
     lbrace </>
     indent 4 (stack $ map ppr stmts) </>
     rbrace
+
+  ppr (Using expr stmts) =
+    text "using" <+> parens(ppr expr) </>
+    lbrace </>
+    indent 4 (stack $ map ppr stmts) </>
+    rbrace
+
+  ppr (Unsafe stmts) =
+    text "unsafe" </>
+    lbrace </>
+    indent 4 (stack $ map ppr stmts) </>
+    rbrace
+
+  ppr (Assign e1 e2) = (text "var" <+> ppr e1 <+> text "=" <+> ppr e2 <;>)
+
+  ppr (AssignOp op e1 e2) = (ppr e1 <+> text (op ++ "=") <+> ppr e2 <;>)
+
+  ppr (Comment s body) = text "//" <> text s </> stack (map ppr body)
+
+  ppr (Assert e s) =
+    (text "Debug.Assert" <> parens(ppr e <> text "," <+> squotes(text s)) <;>)
+
+  ppr (Throw e) = (text "throw" <+> ppr e <;>)
+
+  ppr (Exp e) = (ppr e <;>)
+
+  ppr (Return e) = (text "return" <+> ppr e <;>)
+
+  ppr (Using (Just as) from) =
+    (text "using" <+> text as <+> text "=" <+> text from <;>)
+
+  ppr (Using Nothing from) =
+    (text "using" <+> text from <;>)
 
   ppr (ClassDef d) = ppr d
 

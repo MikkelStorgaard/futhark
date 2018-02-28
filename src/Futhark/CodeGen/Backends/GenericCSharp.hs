@@ -297,7 +297,9 @@ compileProg :: MonadFreshNames m =>
 compileProg prog@(Imp.Functions funs) = do
   src <- getNameSource
   let prog' = runCompilerM prog compileProg'
+  -- TODO: add #define DEBUG so we have assertions
   -- TODO: top up with usings
+  -- TODO: import System.Diagnostics
   -- TODO: include CS code from /rts/csharp
   return $ pretty (CSharpProg prog')
   where compileProg' = do
@@ -378,9 +380,10 @@ entryPointOutput (Imp.TransparentValue (Imp.ArrayValue mem _ (Imp.Space sid) bt 
   pack_output <- asks envEntryOutput
   pack_output mem sid bt ept dims
 
-badInput :: Int -> PyExp -> String -> PyStmt
+-- TODO
+badInput :: Int -> CSharpExp -> String -> CSharpStmt
 badInput i e t =
-  Raise $ simpleCall "TypeError"
+  Throw $ simpleInitClass "TypeError"
   [Call (Field (String err_msg) "format") [Arg (String t), Arg e]]
   where err_msg = unlines [ "Argument #" ++ show i ++ " has invalid value"
                           , "Futhark type: {}"
@@ -490,8 +493,7 @@ readTypeEnum Cert _ = error "readTypeEnum: cert"
 
 readInput :: Imp.ExternalValue -> PyStmt
 readInput (Imp.OpaqueValue desc _) =
-  Raise $ simpleCall "Exception"
-  [String $ "Cannot read argument of type " ++ desc ++ "."]
+  Throw $ simpleInitClass "Exception" [String $ "Cannot read argument of type " ++ desc ++ "."]
 
 readInput decl@(Imp.TransparentValue (Imp.ScalarValue bt ept _)) =
   let reader' = readFun bt ept
