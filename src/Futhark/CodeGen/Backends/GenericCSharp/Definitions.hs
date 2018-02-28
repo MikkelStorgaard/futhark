@@ -1,21 +1,21 @@
 {-# LANGUAGE TemplateHaskell #-}
-module Futhark.CodeGen.Backends.GenericPython.Definitions
-  ( pyFunctions
-  , pyUtility
-  , pyReader
-  , pyPanic
+module Futhark.CodeGen.Backends.GenericCSharp.Definitions
+  ( csFunctions
+  , csReader
+  , csUtility
+  , csPanic
   ) where
 
 import Data.FileEmbed
 
-pyFunctions :: String
-pyFunctions = $(embedStringFile "rts/python/memory.py")
+csFunctions :: String
+csFunctions = $(embedStringFile "rts/csharp/functions.cs")
 
-pyUtility :: String
-pyUtility = $(embedStringFile "rts/python/scalar.py")
+csUtility :: String
+csUtility = $(embedStringFile "rts/csharp/scalar.cs")
 
-pyReader :: String
-pyReader = $(embedStringFile "rts/python/reader.py")
+csReader :: String
+csReader = $(embedStringFile "rts/csharp/reader.cs")
 
-pyPanic :: String
-pyPanic = $(embedStringFile "rts/python/panic.py")
+csPanic :: String
+csPanic = $(embedStringFile "rts/csharp/panic.cs")

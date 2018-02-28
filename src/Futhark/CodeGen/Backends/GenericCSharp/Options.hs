@@ -2,14 +2,14 @@
 -- line argument parsing.  Each option is associated with arbitrary
 -- Python code that will perform side effects, usually by setting some
 -- global variables.
-module Futhark.CodeGen.Backends.GenericPython.Options
+module Futhark.CodeGen.Backends.GenericCSharp.Options
        ( Option (..)
        , OptionArgument (..)
        , generateOptionParser
        )
        where
 
-import Futhark.CodeGen.Backends.GenericPython.AST
+import Futhark.CodeGen.Backends.GenericCSharp.AST
 
 -- | Specification if a single command line option.  The option must
 -- have a long name, and may also have a short name.
@@ -19,7 +19,7 @@ import Futhark.CodeGen.Backends.GenericPython.AST
 data Option = Option { optionLongName :: String
                      , optionShortName :: Maybe Char
                      , optionArgument :: OptionArgument
-                     , optionAction :: [PyStmt]
+                     , optionAction :: [CSharpStmt]
                      }
 
 -- | Whether an option accepts an argument.
@@ -31,7 +31,7 @@ data OptionArgument = NoArgument
 --
 -- If option parsing fails for any reason, the entire process will
 -- terminate with error code 1.
-generateOptionParser :: [Option] -> [PyStmt]
+generateOptionParser :: [Option] -> [CSharpStmt]
 generateOptionParser options =
   [Assign (Var "parser")
    (Call (Var "argparse.ArgumentParser")

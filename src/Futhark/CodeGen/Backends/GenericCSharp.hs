@@ -297,7 +297,8 @@ compileProg :: MonadFreshNames m =>
 compileProg prog@(Imp.Functions funs) = do
   src <- getNameSource
   let prog' = runCompilerM prog compileProg'
-
+  -- TODO: top up with usings
+  -- TODO: include CS code from /rts/csharp
   return $ pretty (CSharpProg prog')
   where compileProg' = do
           definitions <- mapM compileFunc funs
@@ -323,6 +324,13 @@ tupleOrSingle es = Tuple es
 -- simple 'Arg'.
 simpleCall :: String -> [PyExp] -> PyExp
 simpleCall fname = Call (Var fname) . map Arg
+
+-- | A CallMethod 
+callMethod :: String -> String -> [PyExp] -> PyExp
+callMethod object method = CallMethod (Var fname) (Var method) . map Arg
+
+simpleInitClass :: String -> [PyExp] -> PyExp
+simpleInitClass fname = CreateObject (Var fname) . map Arg
 
 compileName :: VName -> String
 compileName = zEncodeString . pretty
@@ -673,21 +681,22 @@ callEntryFun pre_timing entry@(fname, Imp.Function _ _ _ _ _ decl_args) = do
 
 addTiming :: [PyStmt] -> ([PyStmt], PyStmt)
 addTiming statements =
-  ([ Assign (Var "time_start") $ simpleCall "time.time" [] ] ++
+  ([ Assign $ (Var "stop_watch") $ simpleInitClass "Stopwatch" []
+   , Call $ simpleCall "stop_watch.Start" [] ] ++
    statements ++
-   [ Assign (Var "time_end") $ simpleCall "time.time" []
+   [ Call $ simpleCall "stop_watch.Stop" []
+   , (Var "time_elapsed") $ simpleGet "stop_watch.ElapsedMillisconds" []
    , If (Var "runtime_file") print_runtime [] ],
-
-   If (Var "runtime_file") [Exp $ simpleCall "runtime_file.close" []] [])
-  where print_runtime =
-          [Exp $ simpleCall "runtime_file.write"
-           [simpleCall "str"
-            [BinOp "-"
-             (toMicroseconds (Var "time_end"))
-             (toMicroseconds (Var "time_start"))]],
-           Exp $ simpleCall "runtime_file.write" [String "\n"]]
+   If (Var "runtime_file") [Exp $ simpleCall "runtime_file.Close" []] []
+  )
+  where stop_watch =
+          "stop_watch"
+        print_runtime =
+          [Exp $ simpleCall "runtime_file.WriteLine"
+           [ callMethod (toMicroseconds (Var "time_elapsed")) "ToString" [] ],
+           Exp $ simpleCall "runtime_file.WriteLine" [String "\n"]]
         toMicroseconds x =
-          simpleCall "int" [BinOp "*" x $ Integer 1000000]
+          BinOp "*" x $ Integer 1000000
 
 compileUnOp :: Imp.UnOp -> String
 compileUnOp op =
