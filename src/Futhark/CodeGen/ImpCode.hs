@@ -88,10 +88,6 @@ paramName :: Param -> VName
 paramName (MemParam name _) = name
 paramName (ScalarParam name _) = name
 
-paramType :: Param -> PrimType
-paramType (ScalarParam _ t) = t
-paramType _ = undefined
-
 -- | A collection of imperative functions.
 newtype Functions a = Functions [(Name, Function a)]
 
