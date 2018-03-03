@@ -260,10 +260,11 @@ instance Pretty CSStmt where
 
 instance Pretty CSFunDef where
   ppr (Def fname retType args stmts) =
-    ppr retType <+> text fname <> parens(commasep(map ppr args)) </>
+    ppr retType <+> text fname <> parens(commasep(map ppr' args)) </>
     lbrace </>
     indent 4 (stack (map ppr stmts)) </>
     rbrace
+    where ppr' (var, tp) = ppr tp <+> text var
 
 instance Pretty CSClassDef where
   ppr (Class cname body) =

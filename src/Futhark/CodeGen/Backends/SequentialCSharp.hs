@@ -9,6 +9,8 @@ import Futhark.Representation.ExplicitMemory
 import qualified Futhark.CodeGen.ImpCode.Sequential as Imp
 import qualified Futhark.CodeGen.ImpGen.Sequential as ImpGen
 import qualified Futhark.CodeGen.Backends.GenericCSharp as GenericCSharp
+import Futhark.CodeGen.Backends.GenericCSharp.AST (CSStmt(Using))
+
 import Futhark.MonadFreshNames
 
 compileProg :: MonadFreshNames m =>
@@ -21,7 +23,9 @@ compileProg module_name =
             imports
             defines
             operations () [] [])
-  where imports = []
+  where imports = [ Using Nothing "System.Diagnostics"
+                  , Using Nothing "System.ValueTuple"
+                  ]
         defines = []
         operations :: GenericCSharp.Operations Imp.Sequential ()
         operations = GenericCSharp.defaultOperations
