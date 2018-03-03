@@ -316,7 +316,6 @@ compileProg module_name constructor imports defines ops userstate pre_timing opt
   let prog' = runCompilerM prog ops src userstate compileProg'
   return $ pretty (CSProg $
                     imports ++
-                    [Using Nothing "argparse"] ++
                     defines ++
                     [Escape csUtility] ++
                     prog')
@@ -395,7 +394,7 @@ compileType (IntType Int64) = CSInt Int64T
 compileType (FloatType Float32) = CSFloat FloatT
 compileType (FloatType Float64) = CSFloat DoubleT
 compileType Imp.Bool = BoolT
-compileType _ = undefined
+compileType _ = CSInt Int8T
 
 compileDim :: Imp.DimSize -> CSExp
 compileDim (Imp.ConstSize i) = Integer $ toInteger i
@@ -961,4 +960,4 @@ compileCode Imp.Skip = return ()
 
 paramType :: Imp.Param -> PrimType
 paramType (Imp.ScalarParam _ t) = t
-paramType _ = undefined
+paramType _ = Cert

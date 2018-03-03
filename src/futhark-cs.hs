@@ -7,7 +7,6 @@ import System.Directory
 
 import Futhark.Pipeline
 import Futhark.Passes
-import qualified Futhark.CodeGen.Backends.SequentialPython as SequentialPy
 import qualified Futhark.CodeGen.Backends.SequentialCSharp as SequentialCS
 import Futhark.Util.Pretty (prettyText)
 import Futhark.Compiler.CLI
