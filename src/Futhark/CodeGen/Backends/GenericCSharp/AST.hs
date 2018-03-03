@@ -4,6 +4,7 @@
 module Futhark.CodeGen.Backends.GenericCSharp.AST
   ( CSExp(..)
   , CSType(..)
+  , CSComp(..)
   , CSPrim(..)
   , CSInt(..)
   , CSFloat(..)
@@ -151,8 +152,8 @@ data CSIdx = IdxRange CSExp CSExp
                deriving (Eq, Show)
 
 data CSArg = ArgKeyword String CSArg -- please don't assign multiple keywords with the same argument
-               | Arg (Maybe ArgMemType) CSExp
-               deriving (Eq, Show)
+           | Arg (Maybe ArgMemType) CSExp
+           deriving (Eq, Show)
 
 instance Pretty CSArg where
   ppr (ArgKeyword kw arg) = text kw <> colon <+> ppr arg

@@ -351,28 +351,38 @@ compileFunc (fname, Imp.Function _ outputs inputs body _ _) = do
   body' <- collect $ compileCode body
   let inputs' = map compileTypedInput inputs
   let outputs' = compileOutput outputs
-  let retType = tupleOrSingle $ map snd outputs'
-  let ret = Return $ tupleOrSingle outputs'
-  return $ Def (futharkFun . nameToString $ fname) retType inputs' (body'++[ret])
-  where compileTypedInput = bimap nameFun typeFun
+  let (ret, retType) = unzip outputs'
+  let retType' = tupleOrSingleT retType
+  let ret' = Return $ tupleOrSingle ret
+
+  return $ Def (futharkFun . nameToString $ fname) retType' inputs' (body'++[ret'])
+  where compileTypedInput :: Imp.Param -> (String, CSType)
+        compileTypedInput input = (nameFun input, typeFun input)
         nameFun = (compileName . Imp.paramName)
-        typeFun = (compileType . paramType)
+        typeFun = (Primitive . compileType . paramType)
 
 tupleOrSingle :: [CSExp] -> CSExp
 tupleOrSingle [e] = e
 tupleOrSingle es = Tuple es
 
+tupleOrSingleT :: [CSType] -> CSType
+tupleOrSingleT [e] = e
+tupleOrSingleT es = Composite $ TupleT es
+
 -- | A 'Call' where the function is a variable and every argument is a
 -- simple 'Arg'.
 simpleCall :: String -> [CSExp] -> CSExp
-simpleCall fname = Call (Var fname) . map Arg
+simpleCall fname = Call (Var fname) . map simpleArg
+
+simpleArg :: CSExp -> CSArg
+simpleArg = Arg Nothing
 
 -- | A CallMethod
 callMethod :: CSExp -> String -> [CSExp] -> CSExp
-callMethod object method = CallMethod object (Var method) . map Arg
+callMethod object method = CallMethod object (Var method) . map simpleArg
 
 simpleInitClass :: String -> [CSExp] -> CSExp
-simpleInitClass fname = CreateObject (Var fname) . map Arg
+simpleInitClass fname = CreateObject (Var fname) . map simpleArg
 
 compileName :: VName -> String
 compileName = zEncodeString . pretty
@@ -384,7 +394,7 @@ compileType (IntType Int32) = CSInt Int32T
 compileType (IntType Int64) = CSInt Int64T
 compileType (FloatType Float32) = CSFloat FloatT
 compileType (FloatType Float64) = CSFloat DoubleT
-compileType Bool = BoolT
+compileType Imp.Bool = BoolT
 compileType _ = undefined
 
 compileDim :: Imp.DimSize -> CSExp
@@ -412,7 +422,7 @@ entryPointOutput (Imp.OpaqueValue desc vs) =
   mapM (entryPointOutput . Imp.TransparentValue) vs
 entryPointOutput (Imp.TransparentValue (Imp.ScalarValue bt ept name)) =
   return $ simpleCall tf [Var $ compileName name]
-  where tf = compilePrimToExtNp bt ept
+  where tf = compilePrimToExtCs bt ept
 entryPointOutput (Imp.TransparentValue (Imp.ArrayValue mem _ Imp.DefaultSpace bt ept dims)) = do
   let cast = Cast (Var $ compileName mem) (compilePrimTypeExt bt ept)
   return $ simpleCall "createArray" [cast, Tuple $ map compileDim dims]
@@ -424,7 +434,7 @@ entryPointOutput (Imp.TransparentValue (Imp.ArrayValue mem _ (Imp.Space sid) bt 
 badInput :: Int -> CSExp -> String -> CSStmt
 badInput i e t =
   Throw $ simpleInitClass "TypeError"
-  [Call (Field (String err_msg) "format") [Arg (String t), Arg e]]
+  [Call (Field (String err_msg) "format") [simpleArg (String t), simpleArg e]]
   where err_msg = unlines [ "Argument #" ++ show i ++ " has invalid value"
                           , "Futhark type: {}"
                           , "Type of given CSthon value: {}" ]
@@ -457,8 +467,8 @@ entryPointInput (i, Imp.TransparentValue (Imp.ArrayValue mem memsize Imp.Default
   let type_is_wrong =
         UnOp "not" $
         BinOp "and"
-        (BinOp "in" (simpleCall "type" [e]) (List [Var "np.ndarray"]))
-        (BinOp "==" (Field e "dtype") (Var (compilePrimToExtNp t s)))
+        (BinOp "in" (simpleCall "type" [e]) (Array [Var "np.ndarray"]))
+        (BinOp "==" (Field e "dtype") (Var (compilePrimToExtCs t s)))
   stm $ If type_is_wrong
     [badInput i (simpleCall "type" [e]) $ concat (replicate (length dims) "[]") ++
      prettySigned (s==Imp.TypeUnsigned) t]
@@ -484,6 +494,15 @@ entryPointInput (i, Imp.TransparentValue (Imp.ArrayValue mem memsize (Imp.Space 
     [Catch (Tuple [Var "TypeError", Var "AssertionError"])
      [badInput i (simpleCall "type" [e]) $ concat (replicate (length dims) "[]") ++
      prettySigned (ept==Imp.TypeUnsigned) bt]]
+
+copyMemoryDefaultSpace :: VName -> CSExp -> VName -> CSExp -> CSExp ->
+                          CompilerM op s ()
+copyMemoryDefaultSpace destmem destidx srcmem srcidx nbytes = do
+  let offset_call1 = simpleCall "addressOffset"
+                     [Var (compileName destmem), destidx, Var "ct.c_byte"]
+  let offset_call2 = simpleCall "addressOffset"
+                     [Var (compileName srcmem), srcidx, Var "ct.c_byte"]
+  stm $ Exp $ simpleCall "ct.memmove" [offset_call1, offset_call2, nbytes]
 
 extValueDescName :: Imp.ExternalValue -> String
 extValueDescName (Imp.TransparentValue v) = extName $ valueDescName v
@@ -546,7 +565,7 @@ readInput decl@(Imp.TransparentValue (Imp.ScalarValue bt ept _)) =
 readInput decl@(Imp.TransparentValue (Imp.ArrayValue _ _ _ bt ept dims)) =
   let rank' = Var $ show $ length dims
       type_enum = Var $ readTypeEnum bt ept
-      ct = Var $ compilePrimToExtNp bt ept
+      ct = Var $ compilePrimToExtCs bt ept
       stdin = Var "input_stream"
   in Assign (Var $ extValueDescName decl) $ simpleCall "read_array"
      [stdin, type_enum, rank', ct]
@@ -580,7 +599,7 @@ printStm (Imp.ArrayValue _ _ _ bt ept []) e =
 printStm (Imp.ArrayValue mem memsize space bt ept (outer:shape)) e = do
   v <- newVName "print_elem"
   first <- newVName "print_first"
-  let size = simpleCall "np.product" [List $ map compileDim $ outer:shape]
+  let size = simpleCall "np.product" [Array $ map compileDim $ outer:shape]
       emptystr = "empty(" ++ ppArrayType bt (length shape) ++ ")"
   printelem <- printStm (Imp.ArrayValue mem memsize space bt ept shape) $ Var $ compileName v
   return $ If (BinOp "==" size (Integer 0))
