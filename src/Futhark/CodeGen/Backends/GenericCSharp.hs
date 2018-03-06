@@ -228,8 +228,9 @@ futharkFun s = "futhark_" ++ zEncodeString s
 
 paramsTypes :: [Imp.Param] -> [Imp.Type]
 paramsTypes = map paramType
-  where paramType (Imp.MemParam _ space) = Imp.Mem (Imp.ConstSize 0) space
-        paramType (Imp.ScalarParam _ t) = Imp.Scalar t
+
+paramType (Imp.MemParam _ space) = Imp.Mem (Imp.ConstSize 0) space
+paramType (Imp.ScalarParam _ t) = Imp.Scalar t
 
 compileOutput :: [Imp.Param] -> [(CSExp, CSType)]
 compileOutput params = zip (map nameFun params) (map typeFun params)
@@ -386,15 +387,21 @@ simpleInitClass fname = CreateObject (Var fname) . map simpleArg
 compileName :: VName -> String
 compileName = zEncodeString . pretty
 
-compileType :: PrimType -> CSPrim
-compileType (IntType Int8) = CSInt Int8T
-compileType (IntType Int16) = CSInt Int16T
-compileType (IntType Int32) = CSInt Int32T
-compileType (IntType Int64) = CSInt Int64T
-compileType (FloatType Float32) = CSFloat FloatT
-compileType (FloatType Float64) = CSFloat DoubleT
-compileType Imp.Bool = BoolT
-compileType _ = CSInt Int8T
+compileType :: Imp.Type -> CSType
+compileType (Imp.Scalar p) = Primitive $ compilePrimType p
+compileType (Imp.Mem memsize space) = Memory $ compileSpace space
+
+compileSpace = undefined
+
+compilePrimType :: PrimType -> CSPrim
+compilePrimType (IntType Int8) = CSInt Int8T
+compilePrimType (IntType Int16) = CSInt Int16T
+compilePrimType (IntType Int32) = CSInt Int32T
+compilePrimType (IntType Int64) = CSInt Int64T
+compilePrimType (FloatType Float32) = CSFloat FloatT
+compilePrimType (FloatType Float64) = CSFloat DoubleT
+compilePrimType Imp.Bool = BoolT
+compilePrimType Imp.Cert = BoolT
 
 compileDim :: Imp.DimSize -> CSExp
 compileDim (Imp.ConstSize i) = Integer $ toInteger i
@@ -679,19 +686,19 @@ compileBinOpLike x y = do
   let simple s = return $ BinOp s x' y'
   return (x', y', simple)
 
--- | The ctypes type corresponding to a 'PrimType'.
-compilePrimType :: PrimType -> String
-compilePrimType t =
-  case t of
-    IntType Int8 -> "byte"
-    IntType Int16 -> "short"
-    IntType Int32 -> "int"
-    IntType Int64 -> "long"
-    FloatType Float32 -> "float"
-    FloatType Float64 -> "double"
-    Imp.Bool -> "bool"
-    Cert -> "bool"
-
+---- | The ctypes type corresponding to a 'PrimType'.
+--compilePrimType :: PrimType -> String
+--compilePrimType t =
+--  case t of
+--    IntType Int8 -> "byte"
+--    IntType Int16 -> "short"
+--    IntType Int32 -> "int"
+--    IntType Int64 -> "long"
+--    FloatType Float32 -> "float"
+--    FloatType Float64 -> "double"
+--    Imp.Bool -> "bool"
+--    Cert -> "bool"
+--
 -- | The ctypes type corresponding to a 'PrimType', taking sign into account.
 compilePrimTypeExt :: PrimType -> Imp.Signedness -> String
 compilePrimTypeExt t ept =
@@ -726,14 +733,14 @@ compilePrimToCs t =
 compileBitConverter :: PrimType -> String
 compileBitConverter t =
   case t of
-    IntType Int8 -> undefined
+    IntType Int8 -> "BitConverter.ToInt8"
     IntType Int16 -> "BitConverter.ToInt16"
     IntType Int32 -> "BitConverter.ToInt32"
     IntType Int64 -> "BitConverter.ToInt64"
     FloatType Float32 -> "BitConverter.ToSingle"
     FloatType Float64 -> "BitConverter.ToDouble"
     Imp.Bool -> "BitConverter.ToBool"
-    Cert -> undefined
+    Cert -> "BitConverter.ToBool"
 
 -- | The ctypes type corresponding to a 'PrimType', taking sign into account.
 compilePrimToExtCs :: PrimType -> Imp.Signedness -> String
@@ -750,7 +757,7 @@ compilePrimToExtCs t ept =
     (FloatType Float32 , _) -> "Convert.ToSingle"
     (FloatType Float64 , _) -> "Convert.ToDouble"
     (Imp.Bool , _) -> "Convert.ToBool"
-    (Cert , _) -> "Convert.ToByte"
+    (Imp.Cert , _) -> "Convert.ToBool"
 
 compilePrimValue :: Imp.PrimValue -> CSExp
 compilePrimValue (IntValue (Int8Value v)) =
@@ -915,7 +922,7 @@ compileCode (Imp.SetMem dest src _) = do
 
 compileCode (Imp.Allocate name (Imp.Count e) DefaultSpace) = do
   e' <- compileExp e
-  let allocate' = CreateArray (Primitive $ CSInt Int8T) [e']
+  let allocate' = CreateArray (Primitive CSByte) [e']
   let name' = Var (compileName name)
   stm $ Assign name' allocate'
 
@@ -957,7 +964,3 @@ compileCode (Imp.Write dest (Imp.Count idx) elemtype (Imp.Space space) _ elemexp
     <*> compileExp elemexp
 
 compileCode Imp.Skip = return ()
-
-paramType :: Imp.Param -> PrimType
-paramType (Imp.ScalarParam _ t) = t
-paramType _ = Cert

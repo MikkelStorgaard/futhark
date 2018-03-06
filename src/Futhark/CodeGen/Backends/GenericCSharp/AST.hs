@@ -52,6 +52,7 @@ data CSFloat = FloatT
 data CSType = Composite CSComp
             | PointerT CSType
             | Primitive CSPrim
+            | Memory String
             | VoidT
             | CustomT String
             deriving (Eq, Show)
@@ -176,7 +177,7 @@ data CSStmt = If CSExp [CSStmt] [CSStmt]
             | Return CSExp
             | Pass
               -- Definition-like statements.
-            | Using (Maybe String) String
+            | Using (Maybe String) Bool String
             | FunDef CSFunDef
             | ClassDef CSClassDef
             | ConstructorDef CSConstructorDef
@@ -215,11 +216,13 @@ instance Pretty CSStmt where
     indent 4 (stack $ map ppr body) </>
     rbrace
 
-  ppr (Using (Just as) from) =
+  ppr (Using (Just as) _ from) =
     text "using" <+> text as <+> text "=" <+> text from <> semi
 
-  ppr (Using Nothing from) =
-    text "using" <+> text from <> semi
+  ppr (Using Nothing isStatic from) =
+    text (using isStatic) <+> text from <> semi
+    where using True = "using static"
+          using False = "using"
 
   ppr (Unsafe stmts) =
     text "unsafe" </>
