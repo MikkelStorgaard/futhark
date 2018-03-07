@@ -2,7 +2,7 @@
 module Futhark.CodeGen.Backends.GenericCSharp.Definitions
   ( csFunctions
   , csReader
-  , csUtility
+  , csScalar
   , csPanic
   ) where
 
@@ -11,8 +11,8 @@ import Data.FileEmbed
 csFunctions :: String
 csFunctions = $(embedStringFile "rts/csharp/functions.cs")
 
-csUtility :: String
-csUtility = $(embedStringFile "rts/csharp/scalar.cs")
+csScalar :: String
+csScalar = $(embedStringFile "rts/csharp/scalar.cs")
 
 csReader :: String
 csReader = $(embedStringFile "rts/csharp/reader.cs")

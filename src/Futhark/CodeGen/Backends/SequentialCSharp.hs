@@ -23,10 +23,13 @@ compileProg module_name =
             imports
             defines
             operations () [] [])
-  where imports = [ Using Nothing "System.Diagnostics"
-                  , Using Nothing "System.ValueTuple"
+  where imports = [ Using Nothing False "System"
+                  , Using Nothing False "System.Diagnostics"
+                  , Using Nothing False "System.ValueTuple"
+                  , Using Nothing True "System.Convert"
+                  , Using Nothing True "System.Math"
                   ]
-        defines = []
+        defines = [Escape csScalar, Escape csPanic]
         operations :: GenericCSharp.Operations Imp.Sequential ()
         operations = GenericCSharp.defaultOperations
                      { GenericCSharp.opsCompiler = const $ return ()
