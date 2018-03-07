@@ -21,10 +21,12 @@ main = compilerMain () []
           csprog <- either (`internalError` prettyText prog) return =<<
                     SequentialCS.compileProg class_name prog
 
+
+          let outpath' = outpath `addExtension` "cs"
+          liftIO $ writeFile outpath' csprog
           case mode of
             ToLibrary ->
-              liftIO $ writeFile (outpath `addExtension` "cs") csprog
+              return ()
             ToExecutable -> liftIO $ do
-              writeFile outpath csprog
-              perms <- liftIO $ getPermissions outpath
-              setPermissions outpath $ setOwnerExecutable True perms
+              perms <- liftIO $ getPermissions outpath'
+              setPermissions outpath' $ setOwnerExecutable True perms
