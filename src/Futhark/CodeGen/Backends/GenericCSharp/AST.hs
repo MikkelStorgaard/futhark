@@ -52,7 +52,7 @@ data CSFloat = FloatT
 data CSType = Composite CSComp
             | PointerT CSType
             | Primitive CSPrim
-            | Memory String
+            | MemoryT String
             | VoidT
             | CustomT String
             deriving (Eq, Show)
@@ -67,14 +67,13 @@ data CSPrim = CSInt CSInt
             | ByteT
             deriving (Eq, Show)
 
-
-
 instance Pretty CSType where
   ppr (Composite t) = ppr t
   ppr (PointerT t) = parens(ppr t <> text "*")
   ppr (Primitive t) = ppr t
   ppr (CustomT t) = text t
   ppr VoidT = text "void"
+  ppr (MemoryT _) = text "byte[]"
 
 instance Pretty CSPrim where
   ppr BoolT = text "bool"
@@ -177,7 +176,7 @@ data CSStmt = If CSExp [CSStmt] [CSStmt]
             | Return CSExp
             | Pass
               -- Definition-like statements.
-            | Using (Maybe String) Bool String
+            | Using (Maybe String) String
             | FunDef CSFunDef
             | ClassDef CSClassDef
             | ConstructorDef CSConstructorDef
@@ -216,13 +215,11 @@ instance Pretty CSStmt where
     indent 4 (stack $ map ppr body) </>
     rbrace
 
-  ppr (Using (Just as) _ from) =
+  ppr (Using (Just as) from) =
     text "using" <+> text as <+> text "=" <+> text from <> semi
 
-  ppr (Using Nothing isStatic from) =
-    text (using isStatic) <+> text from <> semi
-    where using True = "using static"
-          using False = "using"
+  ppr (Using Nothing from) =
+    text "using" <+> text from <> semi
 
   ppr (Unsafe stmts) =
     text "unsafe" </>

@@ -235,7 +235,7 @@ paramType (Imp.ScalarParam _ t) = Imp.Scalar t
 compileOutput :: [Imp.Param] -> [(CSExp, CSType)]
 compileOutput params = zip (map nameFun params) (map typeFun params)
   where nameFun = (Var . compileName . Imp.paramName)
-        typeFun = (Primitive . compileType . paramType)
+        typeFun = (compileType . paramType)
 
 --runCompilerM :: Imp.Functions op -> Operations op s
 --             -> VNameSource
@@ -318,7 +318,7 @@ compileProg module_name constructor imports defines ops userstate pre_timing opt
   return $ pretty (CSProg $
                     imports ++
                     defines ++
-                    [Escape csUtility] ++
+                    [Escape csScalar, Escape csMemory] ++
                     prog')
   where compileProg' = do
           definitions <- mapM compileFunc funs
@@ -359,7 +359,7 @@ compileFunc (fname, Imp.Function _ outputs inputs body _ _) = do
   where compileTypedInput :: Imp.Param -> (String, CSType)
         compileTypedInput input = (nameFun input, typeFun input)
         nameFun = (compileName . Imp.paramName)
-        typeFun = (Primitive . compileType . paramType)
+        typeFun = (compileType . paramType)
 
 tupleOrSingle :: [CSExp] -> CSExp
 tupleOrSingle [e] = e
@@ -373,6 +373,12 @@ tupleOrSingleT es = Composite $ TupleT es
 -- simple 'Arg'.
 simpleCall :: String -> [CSExp] -> CSExp
 simpleCall fname = Call (Var fname) . map simpleArg
+
+-- | A 'Call' where the function is a variable and every argument is a
+-- simple 'Arg'.
+parametrizedCall :: String -> String -> [CSExp] -> CSExp
+parametrizedCall fname primtype = Call (Var fname') . map simpleArg
+  where fname' = concat [fname, "<", primtype, ">"]
 
 simpleArg :: CSExp -> CSArg
 simpleArg = Arg Nothing
@@ -388,20 +394,20 @@ compileName :: VName -> String
 compileName = zEncodeString . pretty
 
 compileType :: Imp.Type -> CSType
-compileType (Imp.Scalar p) = Primitive $ compilePrimType p
-compileType (Imp.Mem memsize space) = Memory $ compileSpace space
+compileType (Imp.Scalar p) = compilePrimTypeToAST p
+compileType (Imp.Mem memsize space) = MemoryT $ compileSpace space
 
-compileSpace = undefined
+compileSpace _ = "placehodler"
 
-compilePrimType :: PrimType -> CSPrim
-compilePrimType (IntType Int8) = CSInt Int8T
-compilePrimType (IntType Int16) = CSInt Int16T
-compilePrimType (IntType Int32) = CSInt Int32T
-compilePrimType (IntType Int64) = CSInt Int64T
-compilePrimType (FloatType Float32) = CSFloat FloatT
-compilePrimType (FloatType Float64) = CSFloat DoubleT
-compilePrimType Imp.Bool = BoolT
-compilePrimType Imp.Cert = BoolT
+compilePrimTypeToAST :: PrimType -> CSType
+compilePrimTypeToAST (IntType Int8) = Primitive $ CSInt Int8T
+compilePrimTypeToAST (IntType Int16) = Primitive $ CSInt Int16T
+compilePrimTypeToAST (IntType Int32) = Primitive $ CSInt Int32T
+compilePrimTypeToAST (IntType Int64) = Primitive $ CSInt Int64T
+compilePrimTypeToAST (FloatType Float32) = Primitive $ CSFloat FloatT
+compilePrimTypeToAST (FloatType Float64) = Primitive $ CSFloat DoubleT
+compilePrimTypeToAST Imp.Bool = Primitive $ BoolT
+compilePrimTypeToAST Imp.Cert = Primitive $ BoolT
 
 compileDim :: Imp.DimSize -> CSExp
 compileDim (Imp.ConstSize i) = Integer $ toInteger i
@@ -428,7 +434,7 @@ entryPointOutput (Imp.OpaqueValue desc vs) =
   mapM (entryPointOutput . Imp.TransparentValue) vs
 entryPointOutput (Imp.TransparentValue (Imp.ScalarValue bt ept name)) =
   return $ simpleCall tf [Var $ compileName name]
-  where tf = compilePrimToExtCs bt ept
+  where tf = compileTypeConverterExt bt ept
 entryPointOutput (Imp.TransparentValue (Imp.ArrayValue mem _ Imp.DefaultSpace bt ept dims)) = do
   let cast = Cast (Var $ compileName mem) (compilePrimTypeExt bt ept)
   return $ simpleCall "createArray" [cast, Tuple $ map compileDim dims]
@@ -463,7 +469,7 @@ entryPointInput (i, Imp.TransparentValue (Imp.ScalarValue bt s name), e) = do
       -- not have this problem.
       ctobject = compilePrimType bt
       ctcall = simpleCall ctobject [e]
-      npobject = compilePrimToCs bt
+      npobject = compileTypeConverter bt
       npcall = simpleCall npobject [ctcall]
   stm $ Try [Assign vname' npcall]
     [Catch (Tuple [Var "TypeError", Var "AssertionError"])
@@ -474,7 +480,7 @@ entryPointInput (i, Imp.TransparentValue (Imp.ArrayValue mem memsize Imp.Default
         UnOp "not" $
         BinOp "and"
         (BinOp "in" (simpleCall "type" [e]) (Array [Var "np.ndarray"]))
-        (BinOp "==" (Field e "dtype") (Var (compilePrimToExtCs t s)))
+        (BinOp "==" (Field e "dtype") (Var (compileTypeConverterExt t s)))
   stm $ If type_is_wrong
     [badInput i (simpleCall "type" [e]) $ concat (replicate (length dims) "[]") ++
      prettySigned (s==Imp.TypeUnsigned) t]
@@ -571,7 +577,7 @@ readInput decl@(Imp.TransparentValue (Imp.ScalarValue bt ept _)) =
 readInput decl@(Imp.TransparentValue (Imp.ArrayValue _ _ _ bt ept dims)) =
   let rank' = Var $ show $ length dims
       type_enum = Var $ readTypeEnum bt ept
-      ct = Var $ compilePrimToExtCs bt ept
+      ct = Var $ compileTypeConverterExt bt ept
       stdin = Var "input_stream"
   in Assign (Var $ extValueDescName decl) $ simpleCall "read_array"
      [stdin, type_enum, rank', ct]
@@ -686,19 +692,19 @@ compileBinOpLike x y = do
   let simple s = return $ BinOp s x' y'
   return (x', y', simple)
 
----- | The ctypes type corresponding to a 'PrimType'.
---compilePrimType :: PrimType -> String
---compilePrimType t =
---  case t of
---    IntType Int8 -> "byte"
---    IntType Int16 -> "short"
---    IntType Int32 -> "int"
---    IntType Int64 -> "long"
---    FloatType Float32 -> "float"
---    FloatType Float64 -> "double"
---    Imp.Bool -> "bool"
---    Cert -> "bool"
---
+-- | The ctypes type corresponding to a 'PrimType'.
+compilePrimType :: PrimType -> String
+compilePrimType t =
+  case t of
+    IntType Int8 -> "byte"
+    IntType Int16 -> "short"
+    IntType Int32 -> "int"
+    IntType Int64 -> "long"
+    FloatType Float32 -> "float"
+    FloatType Float64 -> "double"
+    Imp.Bool -> "bool"
+    Cert -> "bool"
+
 -- | The ctypes type corresponding to a 'PrimType', taking sign into account.
 compilePrimTypeExt :: PrimType -> Imp.Signedness -> String
 compilePrimTypeExt t ept =
@@ -716,9 +722,43 @@ compilePrimTypeExt t ept =
     (Imp.Bool, _) -> "bool"
     (Cert, _) -> "byte"
 
+-- | Select function to retrieve bytes from byte array as specific data type
+compileBitConverter :: PrimType -> String
+compileBitConverter t =
+  case t of
+    IntType Int8 -> "BitConverter.ToUInt8"
+    IntType Int16 -> "BitConverter.ToUInt16"
+    IntType Int32 -> "BitConverter.ToUInt32"
+    IntType Int64 -> "BitConverter.ToUInt64"
+    IntType Int8 -> "BitConverter.ToInt8"
+    IntType Int16 -> "BitConverter.ToInt16"
+    IntType Int32 -> "BitConverter.ToInt32"
+    IntType Int64 -> "BitConverter.ToInt64"
+    FloatType Float32 -> "BitConverter.ToSingle"
+    FloatType Float64 -> "BitConverter.ToDouble"
+    Imp.Bool -> "BitConverter.ToBoolean"
+    Cert -> "BitConverter.ToBoolean"
+  where bt str = "BitConverter."++str
+
+compileBitConverterExt :: PrimType ->  Imp.Signedness -> String
+compileBitConverterExt t ept =
+  case (t, ept) of
+    (IntType Int8, Imp.TypeUnsigned) -> "BitConverter.ToUInt8"
+    (IntType Int16, Imp.TypeUnsigned) -> "BitConverter.ToUInt16"
+    (IntType Int32, Imp.TypeUnsigned) -> "BitConverter.ToUInt32"
+    (IntType Int64, Imp.TypeUnsigned) -> "BitConverter.ToUInt64"
+    (IntType Int8, _) -> "BitConverter.ToInt8"
+    (IntType Int16, _) -> "BitConverter.ToInt16"
+    (IntType Int32, _) -> "BitConverter.ToInt32"
+    (IntType Int64, _) -> "BitConverter.ToInt64"
+    (FloatType Float32, _) -> "BitConverter.ToSingle"
+    (FloatType Float64, _) -> "BitConverter.ToDouble"
+    (Imp.Bool, _) -> "BitConverter.ToBoolean"
+    (Cert, _) -> "BitConverter.ToBoolean"
+
 -- | The ctypes type corresponding to a 'PrimType'.
-compilePrimToCs :: PrimType -> String
-compilePrimToCs t =
+compileTypeConverter :: PrimType -> String
+compileTypeConverter t =
   case t of
     IntType Int8 -> "Convert.ToByte"
     IntType Int16 -> "Convert.ToInt16"
@@ -729,22 +769,9 @@ compilePrimToCs t =
     Imp.Bool -> "Convert.ToBool"
     Cert -> "Convert.ToByte"
 
--- | Select function to retrieve bytes from byte array as specific data type
-compileBitConverter :: PrimType -> String
-compileBitConverter t =
-  case t of
-    IntType Int8 -> "BitConverter.ToInt8"
-    IntType Int16 -> "BitConverter.ToInt16"
-    IntType Int32 -> "BitConverter.ToInt32"
-    IntType Int64 -> "BitConverter.ToInt64"
-    FloatType Float32 -> "BitConverter.ToSingle"
-    FloatType Float64 -> "BitConverter.ToDouble"
-    Imp.Bool -> "BitConverter.ToBool"
-    Cert -> "BitConverter.ToBool"
-
 -- | The ctypes type corresponding to a 'PrimType', taking sign into account.
-compilePrimToExtCs :: PrimType -> Imp.Signedness -> String
-compilePrimToExtCs t ept =
+compileTypeConverterExt :: PrimType -> Imp.Signedness -> String
+compileTypeConverterExt t ept =
   case (t, ept) of
     (IntType Int8, Imp.TypeUnsigned) -> "Convert.ToByte"
     (IntType Int16, Imp.TypeUnsigned) -> "Convert.ToUInt16"
@@ -791,13 +818,13 @@ compileExp (Imp.LeafExp (Imp.ScalarVar vname) _) =
   return $ Var $ compileName vname
 
 compileExp (Imp.LeafExp (Imp.SizeOf t) _) =
-  return $ simpleCall (compilePrimToCs $ IntType Int32) [Integer $ primByteSize t]
+  return $ simpleCall (compileTypeConverter $ IntType Int32) [Integer $ primByteSize t]
 
 compileExp (Imp.LeafExp (Imp.Index src (Imp.Count iexp) bt DefaultSpace _) _) = do
   iexp' <- compileExp iexp
   let bt' = compilePrimType bt
-  let indexFunction = compilePrimToCs bt
-  return $ simpleCall indexFunction [Var $ compileName src, iexp']
+  let converter = compileBitConverter bt
+  return $ parametrizedCall "indexArray" bt' [Var $ compileName src, iexp', Var converter]
 
 compileExp (Imp.LeafExp (Imp.Index src (Imp.Count iexp) restype (Imp.Space space) _) _) =
   join $ asks envReadScalar
@@ -870,8 +897,8 @@ compileCode (Imp.For i it bound body) = do
   body' <- collect $ compileCode body
   counter <- pretty <$> newVName "counter"
   one <- pretty <$> newVName "one"
-  stm $ Assign (Var i') $ simpleCall (compilePrimToCs (IntType it)) [Integer 0]
-  stm $ Assign (Var one) $ simpleCall (compilePrimToCs (IntType it)) [Integer 1]
+  stm $ Assign (Var i') $ simpleCall (compileTypeConverter (IntType it)) [Integer 0]
+  stm $ Assign (Var one) $ simpleCall (compileTypeConverter (IntType it)) [Integer 1]
   stm $ For counter (simpleCall "Enumerable.Range" [Integer 0, bound']) $
     body' ++ [AssignOp "+" (Var i') (Var one)]
 
@@ -886,8 +913,15 @@ compileCode (Imp.DeclareScalar v Cert) =
 compileCode Imp.DeclareScalar{} = return ()
 
 compileCode (Imp.DeclareArray name DefaultSpace t vs) = do
-  atInit $ Assign name' $ CreateArray (Primitive $ compileType t) (map compilePrimValue vs)
-  where name' = Var $ compileName name
+  atInit $ Assign (Var $ "init_"++name') $
+    simpleCall "unwrapArray"
+    [
+      CreateArray (compilePrimTypeToAST t) (map compilePrimValue vs)
+    , simpleCall "sizeof" [Var $ compilePrimType t]
+    ]
+  stm $ Assign (Var name') $ Var ("init_"++name')
+  where name' = compileName name
+
 
 compileCode (Imp.DeclareArray name (Space space) t vs) =
   join $ asks envStaticArray <*>
@@ -922,7 +956,7 @@ compileCode (Imp.SetMem dest src _) = do
 
 compileCode (Imp.Allocate name (Imp.Count e) DefaultSpace) = do
   e' <- compileExp e
-  let allocate' = CreateArray (Primitive CSByte) [e']
+  let allocate' = simpleCall "allocateMem" [e']
   let name' = Var (compileName name)
   stm $ Assign name' allocate'
 
@@ -951,7 +985,7 @@ compileCode (Imp.Write dest (Imp.Count idx) elemtype DefaultSpace _ elemexp) = d
   idx' <- compileExp idx
   elemexp' <- compileExp elemexp
   let dest' = Var $ compileName dest
-  let elemtype' = compilePrimToCs elemtype
+  let elemtype' = compileTypeConverter elemtype
   let ctype = simpleCall elemtype' [elemexp']
   stm $ Exp $ simpleCall "writeScalarArray" [dest', idx', ctype]
 
