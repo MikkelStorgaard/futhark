@@ -172,10 +172,11 @@ data CSStmt = If CSExp [CSStmt] [CSStmt]
             | For String CSExp [CSStmt]
             | UsingWith CSStmt [CSStmt]
             | Unsafe [CSStmt]
-              -- Maybe declare type (instead of just assigning a 'var'), and
+
             | Assign CSExp CSExp
             | AssignOp String CSExp CSExp
             | AssignTyped String CSExp CSExp
+
             | Comment String [CSStmt]
             | Assert CSExp String
             | Throw CSExp

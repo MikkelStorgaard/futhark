@@ -263,7 +263,7 @@ standardOptions = [
              If (BinOp "!=" (Var "runtime_file") Null)
              [Exp $ simpleCall "runtime_file.Close" []] []
            , Assign (Var "runtime_file") $
-             CreateObject "FileStream" [Var "optarg", Var "FileMode.Create"]
+             simpleInitClass "FileStream" [Var "optarg", Var "FileMode.Create"]
            ]
          },
   Option { optionLongName = "runs"
@@ -335,7 +335,7 @@ compileProg module_name constructor imports defines ops userstate pre_timing opt
                       [ClassDef $ Class name $ constructor' : defines ++ map FunDef definitions]
                      )
         parse_options =
-          AssignTyped "FileStream" "runtime_file" Null :
+          AssignTyped "FileStream" (Var "runtime_file") Null :
           Assign (Var "do_warmup_run") (Bool False) :
           Assign (Var "num_runs") (Integer 1) :
           Assign (Var "entry_point") (String "main") :
