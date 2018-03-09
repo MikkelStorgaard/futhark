@@ -141,7 +141,7 @@ instance Pretty CSExp where
   ppr (Call fun args) = ppr fun <+> parens(commasep $ map ppr args)
   ppr (CallMethod obj method args) = ppr obj <> dot <> ppr method <> parens(commasep $ map ppr args)
   ppr (CreateObject className args) = text "new" <+> ppr className <> parens(commasep $ map ppr args)
-  ppr (CreateArray t dims) = text "new" <+> ppr t <> brackets(commasep $ map ppr dims)
+  ppr (CreateArray t dims) = text "new[]" <+> braces(commasep $ map ppr dims)
   ppr (Tuple exps) = parens(commasep $ map ppr exps)
   ppr (Array exps) = braces(commasep $ map ppr exps) -- uhoh is this right?
   ppr (Field obj field) = ppr obj <> dot <> text field

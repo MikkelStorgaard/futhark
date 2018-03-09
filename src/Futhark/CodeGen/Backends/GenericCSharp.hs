@@ -318,7 +318,7 @@ compileProg module_name constructor imports defines ops userstate pre_timing opt
   return $ pretty (CSProg $
                     imports ++
                     defines ++
-                    [Escape csScalar, Escape csMemory] ++
+                    [] ++
                     prog')
   where compileProg' = do
           definitions <- mapM compileFunc funs
@@ -356,9 +356,9 @@ compileFunc (fname, Imp.Function _ outputs inputs body _ _) = do
   let ret' = Return $ tupleOrSingle ret
 
   return $ Def (futharkFun . nameToString $ fname) retType' inputs' (body'++[ret'])
-  where compileTypedInput :: Imp.Param -> (String, CSType)
-        compileTypedInput input = (nameFun input, typeFun input)
-        nameFun = (compileName . Imp.paramName)
+compileTypedInput :: Imp.Param -> (String, CSType)
+compileTypedInput input = (nameFun input, typeFun input)
+  where nameFun = (compileName . Imp.paramName)
         typeFun = (compileType . paramType)
 
 tupleOrSingle :: [CSExp] -> CSExp
@@ -507,15 +507,6 @@ entryPointInput (i, Imp.TransparentValue (Imp.ArrayValue mem memsize (Imp.Space 
      [badInput i (simpleCall "type" [e]) $ concat (replicate (length dims) "[]") ++
      prettySigned (ept==Imp.TypeUnsigned) bt]]
 
-copyMemoryDefaultSpace :: VName -> CSExp -> VName -> CSExp -> CSExp ->
-                          CompilerM op s ()
-copyMemoryDefaultSpace destmem destidx srcmem srcidx nbytes = do
-  let offset_call1 = simpleCall "addressOffset"
-                     [Var (compileName destmem), destidx, Var "ct.c_byte"]
-  let offset_call2 = simpleCall "addressOffset"
-                     [Var (compileName srcmem), srcidx, Var "ct.c_byte"]
-  stm $ Exp $ simpleCall "ct.memmove" [offset_call1, offset_call2, nbytes]
-
 extValueDescName :: Imp.ExternalValue -> String
 extValueDescName (Imp.TransparentValue v) = extName $ valueDescName v
 extValueDescName (Imp.OpaqueValue desc []) = extName $ zEncodeString desc
@@ -568,7 +559,7 @@ readInput (Imp.OpaqueValue desc _) =
 
 readInput decl@(Imp.TransparentValue (Imp.ScalarValue bt ept _)) =
   let reader' = readFun bt ept
-      stdin = Var "input_stream"
+      stdin = simpleCall "getStream" []
   in Assign (Var $ extValueDescName decl) $ simpleCall reader' [stdin]
 
 -- TODO: If the type identifier of 'Float32' is changed, currently the error
@@ -578,30 +569,30 @@ readInput decl@(Imp.TransparentValue (Imp.ArrayValue _ _ _ bt ept dims)) =
   let rank' = Var $ show $ length dims
       type_enum = Var $ readTypeEnum bt ept
       ct = Var $ compileTypeConverterExt bt ept
-      stdin = Var "input_stream"
+      stdin = simpleCall "getStream" []
   in Assign (Var $ extValueDescName decl) $ simpleCall "read_array"
      [stdin, type_enum, rank', ct]
 
 printPrimStm :: CSExp -> PrimType -> Imp.Signedness -> CSStmt
 printPrimStm val t ept =
   case (t, ept) of
-    (IntType Int8, Imp.TypeUnsigned) -> p "%uu8"
-    (IntType Int16, Imp.TypeUnsigned) -> p "%uu16"
-    (IntType Int32, Imp.TypeUnsigned) -> p "%uu32"
-    (IntType Int64, Imp.TypeUnsigned) -> p "%uu64"
-    (IntType Int8, _) -> p "%di8"
-    (IntType Int16, _) -> p "%di16"
-    (IntType Int32, _) -> p "%di32"
-    (IntType Int64, _) -> p "%di64"
+    (IntType Int8, Imp.TypeUnsigned) -> p "{0}u8"
+    (IntType Int16, Imp.TypeUnsigned) -> p "{0}u16"
+    (IntType Int32, Imp.TypeUnsigned) -> p "{0}u32"
+    (IntType Int64, Imp.TypeUnsigned) -> p "{0}u64"
+    (IntType Int8, _) -> p "{0}i8"
+    (IntType Int16, _) -> p "{0}i16"
+    (IntType Int32, _) -> p "{0}i32"
+    (IntType Int64, _) -> p "{0}i64"
     (Imp.Bool, _) -> If val
-                     [Exp $ simpleCall "sys.stdout.write" [String "true"]]
-                     [Exp $ simpleCall "sys.stdout.write" [String "false"]]
-    (Cert, _) -> Exp $ simpleCall "sys.stdout.write" [String "Checked"]
-    (FloatType Float32, _) -> p "%.6ff32"
-    (FloatType Float64, _) -> p "%.6ff64"
+                     [Exp $ simpleCall "Console.Write" [String "true"]]
+                     [Exp $ simpleCall "Console.Write" [String "false"]]
+    (Cert, _) -> Exp $ simpleCall "Console.Write" [String "Checked"]
+    (FloatType Float32, _) -> p "{0:0.000000}f32"
+    (FloatType Float64, _) -> p "{0:0.000000}f64"
   where p s =
-          Exp $ simpleCall "sys.stdout.write"
-          [BinOp "%" (String s) val]
+          Exp $ simpleCall "Console.Write"
+            [simpleCall "String.Format" [String s, val]]
 
 printStm :: Imp.ValueDesc -> CSExp -> CompilerM op s CSStmt
 printStm (Imp.ScalarValue bt ept _) e =
@@ -611,18 +602,19 @@ printStm (Imp.ArrayValue _ _ _ bt ept []) e =
 printStm (Imp.ArrayValue mem memsize space bt ept (outer:shape)) e = do
   v <- newVName "print_elem"
   first <- newVName "print_first"
-  let size = simpleCall "np.product" [Array $ map compileDim $ outer:shape]
+  let size = callMethod (CreateArray (Primitive $ CSInt Int32T) $ map compileDim $ outer:shape)
+                 "Aggregate" [Integer 1, String "(acc, val) => acc * val"]
       emptystr = "empty(" ++ ppArrayType bt (length shape) ++ ")"
   printelem <- printStm (Imp.ArrayValue mem memsize space bt ept shape) $ Var $ compileName v
   return $ If (BinOp "==" size (Integer 0))
     [puts emptystr]
-    [Assign (Var $ pretty first) $ Var "True",
+    [Assign (Var $ pretty first) $ Var "true",
      puts "[",
      For (pretty v) e [
         If (simpleCall "not" [Var $ pretty first])
         [puts ", "] [],
         printelem,
-        Assign (Var $ pretty first) $ Var "False"
+        Assign (Var $ pretty first) $ Var "false"
     ],
     puts "]"]
     where ppArrayType :: PrimType -> Int -> String
@@ -635,7 +627,7 @@ printStm (Imp.ArrayValue mem memsize space bt ept (outer:shape)) e = do
           prettyPrimType Imp.TypeUnsigned (IntType Int64) = "u64"
           prettyPrimType _ t = pretty t
 
-          puts s = Exp $ simpleCall "sys.stdout.write" [String s]
+          puts s = Exp $ simpleCall "Console.Write" [String s]
 
 printValue :: [(Imp.ExternalValue, CSExp)] -> CompilerM op s [CSStmt]
 printValue = fmap concat . mapM (uncurry printValue')
@@ -645,14 +637,117 @@ printValue = fmap concat . mapM (uncurry printValue')
   -- but we will probably need yet another plugin mechanism here in
   -- the future.
   where printValue' (Imp.OpaqueValue desc _) _ =
-          return [Exp $ simpleCall "sys.stdout.write"
+          return [Exp $ simpleCall "Console.Write"
                   [String $ "#<opaque " ++ desc ++ ">"]]
         printValue' (Imp.TransparentValue (Imp.ArrayValue mem memsize (Space _) bt ept shape)) e =
           printValue' (Imp.TransparentValue (Imp.ArrayValue mem memsize DefaultSpace bt ept shape)) $
-          simpleCall (pretty e ++ ".get") []
+          simpleCall (pretty e ++ ".ForEach") [Var "Console.Write"]
         printValue' (Imp.TransparentValue r) e = do
           p <- printStm r e
-          return [p, Exp $ simpleCall "sys.stdout.write" [String "\n"]]
+          return [p, Exp $ simpleCall "Console.Write" [String "\n"]]
+
+prepareEntry :: (Name, Imp.Function op) -> CompilerM op s
+                (String, [(String,CSType)], CSType, [CSStmt], [CSStmt], [CSStmt], [CSStmt],
+                 [(Imp.ExternalValue, CSExp)], [CSStmt])
+prepareEntry (fname, Imp.Function _ outputs inputs _ results args) = do
+  let (output_paramNames, output_types) = unzip $ map compileTypedInput outputs
+      funTuple = tupleOrSingle $ fmap Var output_paramNames
+
+  (argexps_mem_copies, prepare_run) <- collect' $ forM inputs $ \case
+    Imp.MemParam name space -> do
+      -- A program might write to its input parameters, so create a new memory
+      -- block and copy the source there.  This way the program can be run more
+      -- than once.
+      name' <- newVName $ baseString name <> "_copy"
+      copy <- asks envCopy
+      allocate <- asks envAllocate
+      let size = Var (extName (compileName name) ++ ".Length") -- FIXME
+          dest = name'
+          src = name
+          offset = Integer 0
+      case space of
+        DefaultSpace ->
+          stm $ Assign (Var (compileName name'))
+                       (simpleCall "allocateMem" [size]) -- FIXME
+        Space sid ->
+          allocate name' size sid
+      copy dest offset space src offset space size (IntType Int32) -- FIXME
+      return $ Just $ compileName name'
+    _ -> return Nothing
+
+  prepareIn <- collect $ mapM_ entryPointInput $ zip3 [0..] args $
+               map (Var . extValueDescName) args
+  (res, prepareOut) <- collect' $ mapM entryPointOutput results
+
+  let argexps_lib = map (compileName . Imp.paramName) inputs
+      argexps_bin = zipWith fromMaybe argexps_lib argexps_mem_copies
+      fname' = futharkFun (nameToString fname)
+      arg_types = map (snd . compileTypedInput) inputs
+      inputs' = zip (map extValueDescName args) arg_types
+      output_type = tupleOrSingleT output_types
+      call_lib = [Assign funTuple $ simpleCall fname' (fmap Var argexps_lib)]
+      call_bin = [Assign funTuple $ simpleCall fname' (fmap Var argexps_bin)]
+
+  return (nameToString fname, inputs', output_type,
+          prepareIn, call_lib, call_bin, prepareOut,
+          zip results res, prepare_run)
+
+
+copyMemoryDefaultSpace :: VName -> CSExp -> VName -> CSExp -> CSExp ->
+                          CompilerM op s ()
+copyMemoryDefaultSpace destmem destidx srcmem srcidx nbytes = do
+  stm $ Exp $ simpleCall "Array.Copy" [ Var (compileName srcmem), srcidx
+                                      , Var (compileName destmem), destidx,
+                                        nbytes]
+
+compileEntryFun :: (Name, Imp.Function op)
+                -> CompilerM op s CSFunDef
+compileEntryFun entry = do
+  (fname', params, outputType, prepareIn, body_lib, _, prepareOut, res, _) <- prepareEntry entry
+  let ret = Return $ tupleOrSingle $ map snd res
+  return $ Def fname' outputType params $
+    prepareIn ++ body_lib ++ prepareOut ++ [ret]
+
+
+callEntryFun :: [CSStmt] -> (Name, Imp.Function op)
+             -> CompilerM op s (CSFunDef, String, CSExp)
+callEntryFun pre_timing entry@(fname, Imp.Function _ _ _ _ _ decl_args) = do
+  (_, _, outputType, prepareIn, _, body_bin, _, res, prepare_run) <- prepareEntry entry
+
+  let str_input = map readInput decl_args
+
+      exitcall = [
+          Exp $ simpleCall "Console.WriteLine" [simpleCall "String.Format" [String "Assertion.{} failed", Var "e"]]
+        , Exp $ simpleCall "Environment.Exit" [Integer 1]
+        ]
+      except' = Catch (Var "AssertFailedException") exitcall
+      do_run = body_bin ++ pre_timing
+      (do_run_with_timing, close_runtime_file) = addTiming do_run
+
+      -- We ignore overflow errors and the like for executable entry
+      -- points.  These are (somewhat) well-defined in Futhark.
+
+      do_warmup_run =
+        If (Var "do_warmup_run") (prepare_run ++ do_run) []
+
+      do_num_runs =
+        For "i" (simpleCall "range" [simpleCall "int" [Var "num_runs"]])
+        (prepare_run ++ do_run_with_timing)
+
+  str_output <- printValue res
+
+  let fname' = "entry_" ++ nameToString fname
+
+  return (Def fname' outputType [] $
+           str_input ++ prepareIn ++
+           [Try [do_warmup_run, do_num_runs] [except']] ++
+           [close_runtime_file] ++
+           str_output,
+
+          nameToString fname,
+
+          Var fname')
+
 
 addTiming :: [CSStmt] -> ([CSStmt], CSStmt)
 addTiming statements =
@@ -678,10 +773,10 @@ compileUnOp op =
   case op of
     Not -> "!"
     Complement{} -> "~"
-    Abs{} -> "MathUtils.Abs" -- actually write these helpers
-    FAbs{} -> "MathUtils.Abs"
-    SSignum{} -> "MathUtils.SSignum"
-    USignum{} -> "MathUtils.USignum"
+    Abs{} -> "abs" -- actually write these helpers
+    FAbs{} -> "abs"
+    SSignum{} -> "ssignum"
+    USignum{} -> "usignum"
 
 compileBinOpLike :: Monad m =>
                     Imp.Exp -> Imp.Exp
@@ -726,10 +821,6 @@ compilePrimTypeExt t ept =
 compileBitConverter :: PrimType -> String
 compileBitConverter t =
   case t of
-    IntType Int8 -> "BitConverter.ToUInt8"
-    IntType Int16 -> "BitConverter.ToUInt16"
-    IntType Int32 -> "BitConverter.ToUInt32"
-    IntType Int64 -> "BitConverter.ToUInt64"
     IntType Int8 -> "BitConverter.ToInt8"
     IntType Int16 -> "BitConverter.ToInt16"
     IntType Int32 -> "BitConverter.ToInt32"

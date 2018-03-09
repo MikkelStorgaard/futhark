@@ -9,7 +9,9 @@ import Futhark.Representation.ExplicitMemory
 import qualified Futhark.CodeGen.ImpCode.Sequential as Imp
 import qualified Futhark.CodeGen.ImpGen.Sequential as ImpGen
 import qualified Futhark.CodeGen.Backends.GenericCSharp as GenericCSharp
-import Futhark.CodeGen.Backends.GenericCSharp.AST (CSStmt(Using))
+import Futhark.CodeGen.Backends.GenericCSharp.AST (CSStmt(Using, Escape))
+import Futhark.CodeGen.Backends.GenericCSharp.Definitions
+
 
 import Futhark.MonadFreshNames
 
@@ -29,7 +31,7 @@ compileProg module_name =
                   , Using Nothing "System.Convert"
                   , Using Nothing "System.Math"
                   ]
-        defines = []
+        defines = [Escape csScalar, Escape csMemory]
         operations :: GenericCSharp.Operations Imp.Sequential ()
         operations = GenericCSharp.defaultOperations
                      { GenericCSharp.opsCompiler = const $ return ()
