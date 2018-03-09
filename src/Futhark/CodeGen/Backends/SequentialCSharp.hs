@@ -30,6 +30,7 @@ compileProg module_name =
                   , Using Nothing "System.ValueTuple"
                   , Using Nothing "System.Convert"
                   , Using Nothing "System.Math"
+                  , Using Nothing "Mono.Options"
                   ]
         defines = [Escape csScalar, Escape csMemory]
         operations :: GenericCSharp.Operations Imp.Sequential ()

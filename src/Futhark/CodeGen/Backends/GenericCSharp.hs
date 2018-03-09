@@ -260,10 +260,10 @@ standardOptions = [
          , optionArgument = RequiredArgument
          , optionAction =
            [
-             If (Var "runtime_file")
-             [Exp $ simpleCall "runtime_file.close" []] []
+             If (BinOp "!=" (Var "runtime_file") Null)
+             [Exp $ simpleCall "runtime_file.Close" []] []
            , Assign (Var "runtime_file") $
-             simpleCall "open" [Var "optarg", String "w"]
+             CreateObject "FileStream" [Var "optarg", Var "FileMode.Create"]
            ]
          },
   Option { optionLongName = "runs"
@@ -317,34 +317,29 @@ compileProg module_name constructor imports defines ops userstate pre_timing opt
   let prog' = runCompilerM prog ops src userstate compileProg'
   return $ pretty (CSProg $
                     imports ++
-                    defines ++
-                    [] ++
+                    [Escape "#define DEBUG"] ++
                     prog')
   where compileProg' = do
           definitions <- mapM compileFunc funs
           at_inits <- gets compInit
 
-  -- TODO: add #define DEBUG so we have assertions
-  -- TODO: top up with usings
-  -- TODO: import System.Diagnostics
   -- TODO: include CS code from /rts/cs
           case module_name of
             Just name -> do
               let constructor' = constructorToConstructorDef constructor name at_inits
-              return [ClassDef $ Class name $ constructor' : map FunDef definitions]
+              return [ClassDef $ Class name $ constructor' : defines ++ map FunDef definitions]
             Nothing -> do
               let name = "internal"
               let constructor' = constructorToConstructorDef constructor name at_inits
               return (parse_options ++
-                      [ClassDef $ Class name $ constructor' : map FunDef definitions]
+                      [ClassDef $ Class name $ constructor' : defines ++ map FunDef definitions]
                      )
-        parse_options = []
---        parse_options =
---          Assign (Var "runtime_file") None :
---          Assign (Var "do_warmup_run") (Bool False) :
---          Assign (Var "num_runs") (Integer 1) :
---          Assign (Var "entry_point") (String "main") :
---          generateOptionParser (standardOptions ++ options)
+        parse_options =
+          AssignTyped "FileStream" "runtime_file" Null :
+          Assign (Var "do_warmup_run") (Bool False) :
+          Assign (Var "num_runs") (Integer 1) :
+          Assign (Var "entry_point") (String "main") :
+          generateOptionParser (standardOptions ++ options)
 
 compileFunc :: (Name, Imp.Function op) -> CompilerM op s CSFunDef
 compileFunc (fname, Imp.Function _ outputs inputs body _ _) = do

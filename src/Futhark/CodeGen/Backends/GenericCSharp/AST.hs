@@ -117,6 +117,9 @@ data CSExp = Integer Integer
                | Tuple [CSExp]
                | Array [CSExp]
                | Field CSExp String
+               | Lambda CSExp [CSStmt]
+               | OptionSet [CSExp]
+               | Null
                -- | Dict [(CSExp, CSExp)]
                deriving (Eq, Show)
 
@@ -145,6 +148,9 @@ instance Pretty CSExp where
   ppr (Tuple exps) = parens(commasep $ map ppr exps)
   ppr (Array exps) = braces(commasep $ map ppr exps) -- uhoh is this right?
   ppr (Field obj field) = ppr obj <> dot <> text field
+  ppr (Lambda expr stmts) = ppr expr <+> text "=>" <+> braces(commasep $ map ppr stmts)
+  ppr (OptionSet exps) = text "new OptionSet()" <> braces(commasep $ map ppr exps)
+  ppr Null = text "null"
   --ppr (Dict exps) = undefined
 
 data CSIdx = IdxRange CSExp CSExp
@@ -169,6 +175,7 @@ data CSStmt = If CSExp [CSStmt] [CSStmt]
               -- Maybe declare type (instead of just assigning a 'var'), and
             | Assign CSExp CSExp
             | AssignOp String CSExp CSExp
+            | AssignTyped String CSExp CSExp
             | Comment String [CSStmt]
             | Assert CSExp String
             | Throw CSExp
@@ -234,6 +241,7 @@ instance Pretty CSStmt where
     rbrace
 
   ppr (Assign e1 e2) = text "var" <+> ppr e1 <+> text "=" <+> ppr e2 <> semi
+  ppr (AssignTyped s e1 e2) = text s <+> ppr e1 <+> text "=" <+> ppr e2 <> semi
 
   ppr (AssignOp op e1 e2) = ppr e1 <+> text (op ++ "=") <+> ppr e2 <> semi
 

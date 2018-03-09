@@ -32,39 +32,21 @@ data OptionArgument = NoArgument
 -- If option parsing fails for any reason, the entire process will
 -- terminate with error code 1.
 generateOptionParser :: [Option] -> [CSStmt]
-generateOptionParser options = undefined
---  [Assign (Var "parser")
---   (Call (Var "argparse.ArgumentParser")
---    [ArgKeyword "description" $ Arg Nothing $ String "A compiled Futhark program."])] ++
---  map parseOption options ++
---  [Assign (Var "parser_result") $
---   Call (Var "vars") [Arg $ Call (Var "parser.parse_args") [Arg $ Var "sys.argv[1:]"]]] ++
---  map executeOption options
---  where parseOption option =
---          Exp $ Call (Var "parser.add_argument") $
---          map (Arg . String) name_args ++ argument_args
---          where name_args = maybe id ((:) . ('-':) . (:[])) (optionShortName option)
---                            ["--" ++ optionLongName option]
---                argument_args = case optionArgument option of
---                  RequiredArgument ->
---                    [ArgKeyword "action" (String "append"),
---                     ArgKeyword "default" $ List []]
---
---                  NoArgument ->
---                    [ArgKeyword "action" (String "append_const"),
---                     ArgKeyword "default" $ List [],
---                     ArgKeyword "const" None]
---
---                  OptionalArgument ->
---                    [ArgKeyword "action" (String "append"),
---                     ArgKeyword "default" $ List [],
---                     ArgKeyword "nargs" $ String "?"]
---
---        executeOption option =
---          For "optarg" (Index (Var "parser_result") $
---                        IdxExp $ String $ fieldName option) $
---            optionAction option
---
---        fieldName = map escape . optionLongName
---          where escape '-' = '_'
---                escape c = c
+generateOptionParser options =
+  [ Assign (Var "options") (OptionSet $ map parseOption options)
+  , Assign (Var "extra") (Call (Var "options") [Arg Nothing (Var "args")])
+  ]
+    -- generate options
+    -- try 
+    --   parse options
+    -- catch 
+    --   write help
+    --   write options
+  where parseOption option = Array [ String $ option_string option
+                                   , Lambda (Var "optarg") $ optionAction option ]
+        option_string option = case optionArgument option of
+          RequiredArgument ->
+            concat [maybe "" prefix $ optionShortName option,"|",optionLongName option,"="]
+          _ ->
+            concat [maybe "" prefix $ optionShortName option,"|",optionLongName option]
+        prefix = flip (:) "|"
