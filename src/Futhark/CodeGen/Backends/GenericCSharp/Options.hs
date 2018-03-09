@@ -34,7 +34,7 @@ data OptionArgument = NoArgument
 generateOptionParser :: [Option] -> [CSStmt]
 generateOptionParser options =
   [ Assign (Var "options") (OptionSet $ map parseOption options)
-  , Assign (Var "extra") (Call (Var "options") [Arg Nothing (Var "args")])
+  , Assign (Var "extra") (Call (Var "options.Parse") [Arg Nothing (Var "args")])
   ]
     -- generate options
     -- try 
@@ -46,7 +46,7 @@ generateOptionParser options =
                                    , Lambda (Var "optarg") $ optionAction option ]
         option_string option = case optionArgument option of
           RequiredArgument ->
-            concat [maybe "" prefix $ optionShortName option,"|",optionLongName option,"="]
+            concat [maybe "" prefix $ optionShortName option,optionLongName option,"="]
           _ ->
-            concat [maybe "" prefix $ optionShortName option,"|",optionLongName option]
+            concat [maybe "" prefix $ optionShortName option,optionLongName option]
         prefix = flip (:) "|"

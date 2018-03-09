@@ -262,7 +262,7 @@ standardOptions = [
            [
              If (BinOp "!=" (Var "runtime_file") Null)
              [Exp $ simpleCall "runtime_file.Close" []] []
-           , Assign (Var "runtime_file") $
+           , Reassign (Var "runtime_file") $
              simpleInitClass "FileStream" [Var "optarg", Var "FileMode.Create"]
            ]
          },
@@ -270,15 +270,15 @@ standardOptions = [
          , optionShortName = Just 'r'
          , optionArgument = RequiredArgument
          , optionAction =
-           [ Assign (Var "num_runs") $ Var "optarg"
-           , Assign (Var "do_warmup_run") $ Bool True
+           [ Reassign (Var "num_runs") $ Var "optarg"
+           , Reassign (Var "do_warmup_run") $ Bool True
            ]
          },
   Option { optionLongName = "entry-point"
          , optionShortName = Just 'e'
          , optionArgument = RequiredArgument
          , optionAction =
-           [ Assign (Var "entry_point") $ Var "optarg" ]
+           [ Reassign (Var "entry_point") $ Var "optarg" ]
          },
   -- The -b option is just a dummy for now.
   Option { optionLongName = "binary-output"

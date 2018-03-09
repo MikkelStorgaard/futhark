@@ -141,14 +141,14 @@ instance Pretty CSExp where
   ppr (Cast src bt) = parens(ppr bt) <+> ppr src
   ppr (Index src (IdxExp idx)) = ppr src <> brackets(ppr idx)
   ppr (Index src (IdxRange from to)) = text "MySlice" <> parens(commasep $ map ppr [src, from, to])
-  ppr (Call fun args) = ppr fun <+> parens(commasep $ map ppr args)
+  ppr (Call fun args) = ppr fun <> parens(commasep $ map ppr args)
   ppr (CallMethod obj method args) = ppr obj <> dot <> ppr method <> parens(commasep $ map ppr args)
   ppr (CreateObject className args) = text "new" <+> ppr className <> parens(commasep $ map ppr args)
   ppr (CreateArray t dims) = text "new[]" <+> braces(commasep $ map ppr dims)
   ppr (Tuple exps) = parens(commasep $ map ppr exps)
   ppr (Array exps) = braces(commasep $ map ppr exps) -- uhoh is this right?
   ppr (Field obj field) = ppr obj <> dot <> text field
-  ppr (Lambda expr stmts) = ppr expr <+> text "=>" <+> braces(commasep $ map ppr stmts)
+  ppr (Lambda expr stmts) = ppr expr <+> text "=>" <+> braces(stack $ map ppr stmts)
   ppr (OptionSet exps) = text "new OptionSet()" <> braces(commasep $ map ppr exps)
   ppr Null = text "null"
   --ppr (Dict exps) = undefined
@@ -174,6 +174,7 @@ data CSStmt = If CSExp [CSStmt] [CSStmt]
             | Unsafe [CSStmt]
 
             | Assign CSExp CSExp
+            | Reassign CSExp CSExp
             | AssignOp String CSExp CSExp
             | AssignTyped String CSExp CSExp
 
@@ -242,6 +243,7 @@ instance Pretty CSStmt where
     rbrace
 
   ppr (Assign e1 e2) = text "var" <+> ppr e1 <+> text "=" <+> ppr e2 <> semi
+  ppr (Reassign e1 e2) = ppr e1 <+> text "=" <+> ppr e2 <> semi
   ppr (AssignTyped s e1 e2) = text s <+> ppr e1 <+> text "=" <+> ppr e2 <> semi
 
   ppr (AssignOp op e1 e2) = ppr e1 <+> text (op ++ "=") <+> ppr e2 <> semi
