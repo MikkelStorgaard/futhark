@@ -109,6 +109,7 @@ data CSExp = Integer Integer
                | UnOp String CSExp
                | Cond CSExp CSExp CSExp
                | Index CSExp CSIdx
+               | Pair CSExp CSExp
                | Call CSExp [CSArg]
                | CallMethod CSExp CSExp [CSArg]
                | CreateObject CSExp [CSArg]
@@ -141,6 +142,7 @@ instance Pretty CSExp where
   ppr (Cast src bt) = parens(ppr bt) <+> ppr src
   ppr (Index src (IdxExp idx)) = ppr src <> brackets(ppr idx)
   ppr (Index src (IdxRange from to)) = text "MySlice" <> parens(commasep $ map ppr [src, from, to])
+  ppr (Pair e1 e2) = braces(ppr e1 <> comma <> ppr e2)
   ppr (Call fun args) = ppr fun <> parens(commasep $ map ppr args)
   ppr (CallMethod obj method args) = ppr obj <> dot <> ppr method <> parens(commasep $ map ppr args)
   ppr (CreateObject className args) = text "new" <+> ppr className <> parens(commasep $ map ppr args)

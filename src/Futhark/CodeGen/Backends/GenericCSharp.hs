@@ -331,7 +331,7 @@ compileProg module_name constructor imports defines ops userstate pre_timing opt
 
 
             Nothing -> do
-              let name = "internal"
+              let name = "Program"
               let constructor' = constructorToConstructorDef constructor name at_inits
               (entry_point_defs, entry_point_names, entry_points) <-
                 unzip3 <$> mapM (callEntryFun pre_timing)
@@ -351,19 +351,18 @@ compileProg module_name constructor imports defines ops userstate pre_timing opt
         selectEntryPoint entry_point_names entry_points =
           [ Assign (Var "entry_points") $
               Collection "Dictionary<string, Action>" $ zipWith Pair (map String entry_point_names) entry_points,
-            Assign (Var "entry_point_fun") $
-              simpleCall "entry_points.get" [Var "entry_point"],
-            If (BinOp "==" (Var "entry_point_fun") None)
-              [Exp $ simpleCall "sys.exit"
-                  [Call (Field
-                          (String "No entry point '{}'.  Select another with --entry point.  Options are:\n{}")
-                          "format")
-                    [Arg $ Var "entry_point",
-
-                     Arg $ Call (Field (String "\n") "join")
-                     [Arg $ simpleCall "entry_points.keys" []]]]]
-              [Exp $ simpleCall "entry_point_fun" []]
-          ]
+            If (simpleCall "!entry_points.Contains" [Var "entry_point"])
+              [ Exp $ simpleCall "Console.WriteLine" 
+                  [simpleCall "string.Format" $
+                    [ (String "No entry point '{}'.  Select another with --entry point.  Options are:\n{}")
+                    , simpleArg $ Var "entry_point"
+                    , simpleArg $ Exp $ simpleCall "string.Join"
+                      [ String "\n"
+                      , simpleArg $ Field (Var "entry_points") "Keys" ]]]
+              , Exp $ simpleCall "Environment.Exit" [Integer 1]]
+              [ Assign (Var "entry_point_fun") $
+                  Index "entry_points" (IdxExp $ Var "entry_point")
+              , Exp $ simpleCall "entry_point_fun.Invoke" []]]
 
 
 compileFunc :: (Name, Imp.Function op) -> CompilerM op s CSFunDef

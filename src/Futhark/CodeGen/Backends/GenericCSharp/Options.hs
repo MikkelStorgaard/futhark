@@ -49,6 +49,4 @@ generateOptionParser options =
             concat [maybe "" prefix $ optionShortName option,optionLongName option,"="]
           _ ->
             concat [maybe "" prefix $ optionShortName option,optionLongName option]
-        prefix = flip (:) "|"                {
-                    {"string", () => 4}
-                };
+        prefix = flip (:) "|"
