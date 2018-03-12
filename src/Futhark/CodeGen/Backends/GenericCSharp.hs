@@ -316,30 +316,55 @@ compileProg module_name constructor imports defines ops userstate pre_timing opt
   src <- getNameSource
   let prog' = runCompilerM prog ops src userstate compileProg'
   return $ pretty (CSProg $
-                    imports ++
                     [Escape "#define DEBUG"] ++
+                    imports ++
                     prog')
   where compileProg' = do
           definitions <- mapM compileFunc funs
           at_inits <- gets compInit
 
-  -- TODO: include CS code from /rts/cs
           case module_name of
             Just name -> do
+              entry_points <- mapM compileEntryFun $ filter (Imp.functionEntry . snd) funs
               let constructor' = constructorToConstructorDef constructor name at_inits
-              return [ClassDef $ Class name $ constructor' : defines ++ map FunDef definitions]
+              return [ClassDef $ Class name $ constructor' : defines ++ (map FunDef definitions) ++ entry_points]
+
+
             Nothing -> do
               let name = "internal"
               let constructor' = constructorToConstructorDef constructor name at_inits
-              return (parse_options ++
-                      [ClassDef $ Class name $ constructor' : defines ++ map FunDef definitions]
-                     )
+              (entry_point_defs, entry_point_names, entry_points) <-
+                unzip3 <$> mapM (callEntryFun pre_timing)
+                (filter (Imp.functionEntry . snd) funs)
+
+              return [ClassDef $ Class name $ constructor' : defines ++ map FunDef definitions ++
+                      parse_options ++ map FunDef entry_point_defs ++
+                      selectEntryPoint entry_point_names entry_points]
+
         parse_options =
           AssignTyped "FileStream" (Var "runtime_file") Null :
           Assign (Var "do_warmup_run") (Bool False) :
           Assign (Var "num_runs") (Integer 1) :
           Assign (Var "entry_point") (String "main") :
           generateOptionParser (standardOptions ++ options)
+
+        selectEntryPoint entry_point_names entry_points =
+          [ Assign (Var "entry_points") $
+              Collection "Dictionary<string, Action>" $ zipWith Pair (map String entry_point_names) entry_points,
+            Assign (Var "entry_point_fun") $
+              simpleCall "entry_points.get" [Var "entry_point"],
+            If (BinOp "==" (Var "entry_point_fun") None)
+              [Exp $ simpleCall "sys.exit"
+                  [Call (Field
+                          (String "No entry point '{}'.  Select another with --entry point.  Options are:\n{}")
+                          "format")
+                    [Arg $ Var "entry_point",
+
+                     Arg $ Call (Field (String "\n") "join")
+                     [Arg $ simpleCall "entry_points.keys" []]]]]
+              [Exp $ simpleCall "entry_point_fun" []]
+          ]
+
 
 compileFunc :: (Name, Imp.Function op) -> CompilerM op s CSFunDef
 compileFunc (fname, Imp.Function _ outputs inputs body _ _) = do

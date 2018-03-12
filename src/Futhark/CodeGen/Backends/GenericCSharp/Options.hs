@@ -33,7 +33,7 @@ data OptionArgument = NoArgument
 -- terminate with error code 1.
 generateOptionParser :: [Option] -> [CSStmt]
 generateOptionParser options =
-  [ Assign (Var "options") (OptionSet $ map parseOption options)
+  [ Assign (Var "options") (Collection "OptionSet" $ map parseOption options)
   , Assign (Var "extra") (Call (Var "options.Parse") [Arg Nothing (Var "args")])
   ]
     -- generate options
@@ -49,4 +49,6 @@ generateOptionParser options =
             concat [maybe "" prefix $ optionShortName option,optionLongName option,"="]
           _ ->
             concat [maybe "" prefix $ optionShortName option,optionLongName option]
-        prefix = flip (:) "|"
+        prefix = flip (:) "|"                {
+                    {"string", () => 4}
+                };

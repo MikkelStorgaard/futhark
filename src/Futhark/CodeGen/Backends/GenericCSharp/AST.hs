@@ -118,7 +118,7 @@ data CSExp = Integer Integer
                | Array [CSExp]
                | Field CSExp String
                | Lambda CSExp [CSStmt]
-               | OptionSet [CSExp]
+               | Collection String [CSExp]
                | Null
                -- | Dict [(CSExp, CSExp)]
                deriving (Eq, Show)
@@ -149,7 +149,7 @@ instance Pretty CSExp where
   ppr (Array exps) = braces(commasep $ map ppr exps) -- uhoh is this right?
   ppr (Field obj field) = ppr obj <> dot <> text field
   ppr (Lambda expr stmts) = ppr expr <+> text "=>" <+> braces(stack $ map ppr stmts)
-  ppr (OptionSet exps) = text "new OptionSet()" <> braces(commasep $ map ppr exps)
+  ppr (Collection collection exps) = text "new "<> text collection <> text "()" <> braces(commasep $ map ppr exps)
   ppr Null = text "null"
   --ppr (Dict exps) = undefined
 
