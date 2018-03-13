@@ -47,6 +47,7 @@ import Control.Monad.State
 import Control.Monad.Reader
 import Control.Monad.Writer
 import Control.Monad.RWS
+import Control.Arrow((&&&))
 import Data.Maybe
 import Data.List
 import qualified Data.Map.Strict as M
@@ -57,10 +58,10 @@ import Futhark.Representation.AST.Syntax (Space(..))
 import qualified Futhark.CodeGen.ImpCode as Imp
 import Futhark.CodeGen.Backends.GenericCSharp.AST
 import Futhark.CodeGen.Backends.GenericCSharp.Options
-import Futhark.CodeGen.Backends.GenericCSharp.Definitions
+import Futhark.CodeGen.Backends.GenericCSharp.Definitions()
 import Futhark.Util.Pretty(pretty)
 import Futhark.Util (zEncodeString)
-import Futhark.Representation.AST.Attributes (builtInFunctions, isBuiltInFunction)
+import Futhark.Representation.AST.Attributes (builtInFunctions)
 
 -- | A substitute expression compiler, tried before the main
 -- compilation function.
@@ -229,13 +230,14 @@ futharkFun s = "futhark_" ++ zEncodeString s
 paramsTypes :: [Imp.Param] -> [Imp.Type]
 paramsTypes = map paramType
 
+paramType :: Imp.Param -> Imp.Type
 paramType (Imp.MemParam _ space) = Imp.Mem (Imp.ConstSize 0) space
 paramType (Imp.ScalarParam _ t) = Imp.Scalar t
 
 compileOutput :: [Imp.Param] -> [(CSExp, CSType)]
-compileOutput params = zip (map nameFun params) (map typeFun params)
-  where nameFun = (Var . compileName . Imp.paramName)
-        typeFun = (compileType . paramType)
+compileOutput = map (nameFun &&& typeFun)
+  where nameFun = Var . compileName . Imp.paramName
+        typeFun = compileType . paramType
 
 --runCompilerM :: Imp.Functions op -> Operations op s
 --             -> VNameSource
@@ -327,7 +329,7 @@ compileProg module_name constructor imports defines ops userstate pre_timing opt
             Just name -> do
               entry_points <- mapM compileEntryFun $ filter (Imp.functionEntry . snd) funs
               let constructor' = constructorToConstructorDef constructor name at_inits
-              return [ClassDef $ Class name $ constructor' : defines ++ (map FunDef definitions) ++ entry_points]
+              return [ClassDef $ Class name $ constructor' : defines ++ map FunDef (definitions ++ entry_points)]
 
 
             Nothing -> do
@@ -352,16 +354,16 @@ compileProg module_name constructor imports defines ops userstate pre_timing opt
           [ Assign (Var "entry_points") $
               Collection "Dictionary<string, Action>" $ zipWith Pair (map String entry_point_names) entry_points,
             If (simpleCall "!entry_points.Contains" [Var "entry_point"])
-              [ Exp $ simpleCall "Console.WriteLine" 
-                  [simpleCall "string.Format" $
-                    [ (String "No entry point '{}'.  Select another with --entry point.  Options are:\n{}")
-                    , simpleArg $ Var "entry_point"
-                    , simpleArg $ Exp $ simpleCall "string.Join"
-                      [ String "\n"
-                      , simpleArg $ Field (Var "entry_points") "Keys" ]]]
+              [ Exp $ simpleCall "Console.WriteLine"
+                  [simpleCall "string.Format"
+                    [ String "No entry point '{}'.  Select another with --entry point.  Options are:\n{}"
+                    , Var "entry_point"
+                    , simpleCall "string.Join"
+                        [ String "\n"
+                        , Field (Var "entry_points") "Keys" ]]]
               , Exp $ simpleCall "Environment.Exit" [Integer 1]]
               [ Assign (Var "entry_point_fun") $
-                  Index "entry_points" (IdxExp $ Var "entry_point")
+                  Index (Var "entry_points") (IdxExp $ Var "entry_point")
               , Exp $ simpleCall "entry_point_fun.Invoke" []]]
 
 
@@ -377,8 +379,8 @@ compileFunc (fname, Imp.Function _ outputs inputs body _ _) = do
   return $ Def (futharkFun . nameToString $ fname) retType' inputs' (body'++[ret'])
 compileTypedInput :: Imp.Param -> (String, CSType)
 compileTypedInput input = (nameFun input, typeFun input)
-  where nameFun = (compileName . Imp.paramName)
-        typeFun = (compileType . paramType)
+  where nameFun = compileName . Imp.paramName
+        typeFun = compileType . paramType
 
 tupleOrSingle :: [CSExp] -> CSExp
 tupleOrSingle [e] = e
@@ -414,8 +416,9 @@ compileName = zEncodeString . pretty
 
 compileType :: Imp.Type -> CSType
 compileType (Imp.Scalar p) = compilePrimTypeToAST p
-compileType (Imp.Mem memsize space) = MemoryT $ compileSpace space
+compileType (Imp.Mem _ space) = MemoryT $ compileSpace space
 
+compileSpace :: Imp.Space -> String
 compileSpace _ = "placehodler"
 
 compilePrimTypeToAST :: PrimType -> CSType
@@ -425,8 +428,8 @@ compilePrimTypeToAST (IntType Int32) = Primitive $ CSInt Int32T
 compilePrimTypeToAST (IntType Int64) = Primitive $ CSInt Int64T
 compilePrimTypeToAST (FloatType Float32) = Primitive $ CSFloat FloatT
 compilePrimTypeToAST (FloatType Float64) = Primitive $ CSFloat DoubleT
-compilePrimTypeToAST Imp.Bool = Primitive $ BoolT
-compilePrimTypeToAST Imp.Cert = Primitive $ BoolT
+compilePrimTypeToAST Imp.Bool = Primitive BoolT
+compilePrimTypeToAST Imp.Cert = Primitive BoolT
 
 compileDim :: Imp.DimSize -> CSExp
 compileDim (Imp.ConstSize i) = Integer $ toInteger i
@@ -714,7 +717,7 @@ prepareEntry (fname, Imp.Function _ outputs inputs _ results args) = do
 
 copyMemoryDefaultSpace :: VName -> CSExp -> VName -> CSExp -> CSExp ->
                           CompilerM op s ()
-copyMemoryDefaultSpace destmem destidx srcmem srcidx nbytes = do
+copyMemoryDefaultSpace destmem destidx srcmem srcidx nbytes =
   stm $ Exp $ simpleCall "Array.Copy" [ Var (compileName srcmem), srcidx
                                       , Var (compileName destmem), destidx,
                                         nbytes]
@@ -778,9 +781,7 @@ addTiming statements =
    , If (Var "runtime_file") print_runtime [] ],
    If (Var "runtime_file") [Exp $ simpleCall "runtime_file.Close" []] []
   )
-  where stop_watch =
-          "stop_watch"
-        print_runtime =
+  where print_runtime =
           [Exp $ simpleCall "runtime_file.WriteLine"
            [ callMethod (toMicroseconds (Var "time_elapsed")) "ToString" [] ],
            Exp $ simpleCall "runtime_file.WriteLine" [String "\n"]]
@@ -848,7 +849,6 @@ compileBitConverter t =
     FloatType Float64 -> "BitConverter.ToDouble"
     Imp.Bool -> "BitConverter.ToBoolean"
     Cert -> "BitConverter.ToBoolean"
-  where bt str = "BitConverter."++str
 
 compileBitConverterExt :: PrimType ->  Imp.Signedness -> String
 compileBitConverterExt t ept =
