@@ -340,8 +340,8 @@ compileProg module_name constructor imports defines ops userstate pre_timing opt
                 (filter (Imp.functionEntry . snd) funs)
 
               return [ClassDef $ Class name $ constructor' : defines ++ map FunDef definitions ++
-                      parse_options ++ map FunDef entry_point_defs ++
-                      selectEntryPoint entry_point_names entry_points]
+                      map FunDef entry_point_defs ++
+                      [FunDef $ Def "main" VoidT [] $ [parse_options, selectEntryPoint entry_point_names entry_points]]
 
         parse_options =
           AssignTyped "FileStream" (Var "runtime_file") Null :
