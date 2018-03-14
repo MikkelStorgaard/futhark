@@ -64,8 +64,7 @@ data CSComp = ArrayT CSType
 data CSPrim = CSInt CSInt
             | CSFloat CSFloat
             | BoolT
- it's a good thing for people to not take their cars and to take transit instead. so increasing transit capacity and decreasing road demand is good.
-           | ByteT
+            | ByteT
             deriving (Eq, Show)
 
 instance Pretty CSType where
