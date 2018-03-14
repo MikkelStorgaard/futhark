@@ -5,6 +5,7 @@ module Futhark.CodeGen.Backends.GenericCSharp.Definitions
   , csMemory
   , csScalar
   , csPanic
+  , csExceptions
   ) where
 
 import Data.FileEmbed
@@ -23,3 +24,6 @@ csReader = $(embedStringFile "rts/csharp/reader.cs")
 
 csPanic :: String
 csPanic = $(embedStringFile "rts/csharp/panic.cs")
+
+csExceptions :: String
+csExceptions = $(embedStringFile "rts/csharp/exceptions.cs")

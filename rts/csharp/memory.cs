@@ -1,4 +1,59 @@
+public class FlatArray<T>
+{
+    private int[] shape;
+    private T[] array;
+    public FlatArray(T[] data_array, int[] shape_array) 
+    {
+        shape = shape_array;
+        array = data_array;
+    }
+    
+    public FlatArray(T[] data_array)
+    {
+        shape = new[] {data_array.Length};
+        array = data_array;
+    }
 
+    private int getIdx(int[] idxs)
+    {
+        int idx = 0;
+        for (int i = 0; i<idxs.Length; i++)
+        {
+            idx += shape[i] * idxs[i];
+        }
+        return idx;
+
+    }
+    public T this[params int[] indexes]
+    {
+        get
+        {
+            Debug.Assert(indexes.Length == shape.Length);
+            return array[getIdx(indexes)];
+        }
+
+        set
+        {
+            Debug.Assert(indexes.Length == shape.Length);
+            array[getIdx(indexes)] = value;
+        }
+    }
+}
+
+public class Opaque{
+    object desc;
+    object data;
+    public Opaque(string str, object payload)
+    {
+        this.desc = str;
+        this.data = payload;
+    }
+
+    public override string ToString()
+    {
+        return string.Format("<opaque Futhark value of type {}>", desc);
+    }
+}
 
 byte[] allocateMem(int size)
 {

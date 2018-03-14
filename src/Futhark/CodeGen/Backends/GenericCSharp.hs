@@ -446,20 +446,21 @@ unpackDim arr_name (Imp.VarSize var) i = do
   let shape_name = Field arr_name "shape"
   let src = Index shape_name $ IdxExp $ Integer $ toInteger i
   let dest = Var $ compileName var
-  let makeNumpy = simpleCall "np.int32" [src]
-  stm $ Try [Assert (BinOp "==" dest makeNumpy) "variant dimension wrong"]
-        [Catch (Var "NameError") [Assign dest makeNumpy]]
+  stm $ Assign dest src
 
 entryPointOutput :: Imp.ExternalValue -> CompilerM op s CSExp
 entryPointOutput (Imp.OpaqueValue desc vs) =
-  simpleCall "opaque" . (String (pretty desc):) <$>
+  simpleInitClass "Opaque" . (String (pretty desc):) <$>
   mapM (entryPointOutput . Imp.TransparentValue) vs
+
 entryPointOutput (Imp.TransparentValue (Imp.ScalarValue bt ept name)) =
   return $ simpleCall tf [Var $ compileName name]
   where tf = compileTypeConverterExt bt ept
+
 entryPointOutput (Imp.TransparentValue (Imp.ArrayValue mem _ Imp.DefaultSpace bt ept dims)) = do
   let cast = Cast (Var $ compileName mem) (compilePrimTypeExt bt ept)
   return $ simpleCall "createArray" [cast, Tuple $ map compileDim dims]
+
 entryPointOutput (Imp.TransparentValue (Imp.ArrayValue mem _ (Imp.Space sid) bt ept dims)) = do
   pack_output <- asks envEntryOutput
   pack_output mem sid bt ept dims
@@ -467,18 +468,18 @@ entryPointOutput (Imp.TransparentValue (Imp.ArrayValue mem _ (Imp.Space sid) bt 
 -- TODO
 badInput :: Int -> CSExp -> String -> CSStmt
 badInput i e t =
-  Throw $ simpleInitClass "TypeError"
-  [Call (Field (String err_msg) "format") [simpleArg (String t), simpleArg e]]
+  Throw $ simpleInitClass "TypeError" [formatString err_msg [String t, e]]
   where err_msg = unlines [ "Argument #" ++ show i ++ " has invalid value"
                           , "Futhark type: {}"
-                          , "Type of given CSthon value: {}" ]
-
+                          , "Type of given C# value: {}" ]
+getCSExpType :: CSExp -> CSExp
+getCSExpType e = Field (callMethod e "GetType" []) "Name"
 
 entryPointInput :: (Int, Imp.ExternalValue, CSExp) -> CompilerM op s ()
 entryPointInput (i, Imp.OpaqueValue desc vs, e) = do
-  let type_is_ok = BinOp "and" (simpleCall "isinstance" [e, Var "opaque"])
+  let type_is_ok = BinOp "&&" (BinOp "is" e (Var "Opaque"))
                                (BinOp "==" (Field e "desc") (String desc))
-  stm $ If (UnOp "not" type_is_ok) [badInput i (simpleCall "type" [e]) desc] []
+  stm $ If (UnOp "!" type_is_ok) [badInput i (getCSExpType e) desc] []
   mapM_ entryPointInput $ zip3 (repeat i) (map Imp.TransparentValue vs) $
     map (Index (Field e "data") . IdxExp . Integer) [0..]
 
@@ -494,17 +495,16 @@ entryPointInput (i, Imp.TransparentValue (Imp.ScalarValue bt s name), e) = do
       npobject = compileTypeConverter bt
       npcall = simpleCall npobject [ctcall]
   stm $ Try [Assign vname' npcall]
-    [Catch (Tuple [Var "TypeError", Var "AssertionError"])
-     [badInput i (simpleCall "type" [e]) $ prettySigned (s==Imp.TypeUnsigned) bt]]
+    [Catch (Var "Exception") [badInput i (getCSExpType e) $ prettySigned (s==Imp.TypeUnsigned) bt]]
 
 entryPointInput (i, Imp.TransparentValue (Imp.ArrayValue mem memsize Imp.DefaultSpace t s dims), e) = do
   let type_is_wrong =
-        UnOp "not" $
-        BinOp "and"
-        (BinOp "in" (simpleCall "type" [e]) (Array [Var "np.ndarray"]))
-        (BinOp "==" (Field e "dtype") (Var (compileTypeConverterExt t s)))
+        UnOp "!" $
+        BinOp "&&"
+        (BinOp "is" e $ Var "FlatArray`1")
+        (BinOp "==" (Field e "GetType().GetGenericArguments()[0]") (Var (compileSystemTypeExt t s)))
   stm $ If type_is_wrong
-    [badInput i (simpleCall "type" [e]) $ concat (replicate (length dims) "[]") ++
+    [badInput i (getCSExpType e) $ concat (replicate (length dims) "[]") ++
      prettySigned (s==Imp.TypeUnsigned) t]
     []
 
@@ -514,8 +514,7 @@ entryPointInput (i, Imp.TransparentValue (Imp.ArrayValue mem memsize Imp.Default
 
   case memsize of
     Imp.VarSize sizevar ->
-      stm $ Assign (Var $ compileName sizevar) $
-      simpleCall "np.int32" [Field e "nbytes"]
+      stm $ Assign (Var $ compileName sizevar) $ Field e "Length"
     Imp.ConstSize _ ->
       return ()
 
@@ -524,10 +523,11 @@ entryPointInput (i, Imp.TransparentValue (Imp.ArrayValue mem memsize Imp.Default
 entryPointInput (i, Imp.TransparentValue (Imp.ArrayValue mem memsize (Imp.Space sid) bt ept dims), e) = do
   unpack_input <- asks envEntryInput
   unpack <- collect $ unpack_input mem memsize sid bt ept dims e
-  stm $ Try unpack
-    [Catch (Tuple [Var "TypeError", Var "AssertionError"])
-     [badInput i (simpleCall "type" [e]) $ concat (replicate (length dims) "[]") ++
-     prettySigned (ept==Imp.TypeUnsigned) bt]]
+  stm $ Try unpack $
+    map (\except -> Catch except 
+     [badInput i (getCSExpType e) $ concat (replicate (length dims) "[]") ++
+     prettySigned (ept==Imp.TypeUnsigned) bt])
+    [Var "TypeError", Var "AssertionError"]
 
 extValueDescName :: Imp.ExternalValue -> String
 extValueDescName (Imp.TransparentValue v) = extName $ valueDescName v
@@ -613,8 +613,11 @@ printPrimStm val t ept =
     (FloatType Float32, _) -> p "{0:0.000000}f32"
     (FloatType Float64, _) -> p "{0:0.000000}f64"
   where p s =
-          Exp $ simpleCall "Console.Write"
-            [simpleCall "String.Format" [String s, val]]
+          Exp $ simpleCall "Console.Write" [formatString s [val]]
+
+formatString :: String -> [CSExp] -> CSExp
+formatString fmt contents =
+  simpleCall "String.Format" $ String fmt : contents
 
 printStm :: Imp.ValueDesc -> CSExp -> CompilerM op s CSStmt
 printStm (Imp.ScalarValue bt ept _) e =
@@ -742,7 +745,7 @@ callEntryFun pre_timing entry@(fname, Imp.Function _ _ _ _ _ decl_args) = do
   let str_input = map readInput decl_args
 
       exitcall = [
-          Exp $ simpleCall "Console.WriteLine" [simpleCall "String.Format" [String "Assertion.{} failed", Var "e"]]
+          Exp $ simpleCall "Console.WriteLine" [formatString "Assertion.{} failed" [Var "e"]]
         , Exp $ simpleCall "Environment.Exit" [Integer 1]
         ]
       except' = Catch (Var "AssertFailedException") exitcall
@@ -756,7 +759,7 @@ callEntryFun pre_timing entry@(fname, Imp.Function _ _ _ _ _ decl_args) = do
         If (Var "do_warmup_run") (prepare_run ++ do_run) []
 
       do_num_runs =
-        For "i" (simpleCall "range" [simpleCall "int" [Var "num_runs"]])
+        For "i" (simpleCall "Enumerable.Range" [Integer 0, Var "num_runs"])
         (prepare_run ++ do_run_with_timing)
 
   str_output <- printValue res
@@ -898,6 +901,25 @@ compileTypeConverterExt t ept =
     (FloatType Float64 , _) -> "Convert.ToDouble"
     (Imp.Bool , _) -> "Convert.ToBool"
     (Imp.Cert , _) -> "Convert.ToBool"
+
+-- | The ctypes type corresponding to a 'PrimType', taking sign into account.
+compileSystemTypeExt :: PrimType -> Imp.Signedness -> String
+compileSystemTypeExt t ept =
+  case (t, ept) of
+    (IntType Int8, Imp.TypeUnsigned) -> "System.Byte"
+    (IntType Int16, Imp.TypeUnsigned) -> "System.UInt16"
+    (IntType Int32, Imp.TypeUnsigned) -> "System.UInt32"
+    (IntType Int64, Imp.TypeUnsigned) -> "System.UInt64"
+    (IntType Int8 , _) -> "System.SByte"
+    (IntType Int16 , _) -> "System.Int16"
+    (IntType Int32 , _) -> "System.Int32"
+    (IntType Int64 , _) -> "System.Int64"
+    (FloatType Float32 , _) -> "System.Single"
+    (FloatType Float64 , _) -> "System.Double"
+    (Imp.Bool , _) -> "System.Boolean"
+    (Imp.Cert , _) -> "System.Boolean"
+
+
 
 compilePrimValue :: Imp.PrimValue -> CSExp
 compilePrimValue (IntValue (Int8Value v)) =

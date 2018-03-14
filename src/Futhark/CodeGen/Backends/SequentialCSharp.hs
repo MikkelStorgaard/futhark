@@ -32,7 +32,7 @@ compileProg module_name =
                   , Using Nothing "System.Math"
                   , Using Nothing "Mono.Options"
                   ]
-        defines = [Escape csScalar, Escape csMemory]
+        defines = [Escape csScalar, Escape csMemory, Escape csExceptions]
         operations :: GenericCSharp.Operations Imp.Sequential ()
         operations = GenericCSharp.defaultOperations
                      { GenericCSharp.opsCompiler = const $ return ()
