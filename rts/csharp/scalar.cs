@@ -163,6 +163,16 @@ static int usignum16(ushort x){return x < 0 ? ssignum16(Convert.ToInt16(-x)) : s
 static int usignum32(uint x){return x < 0 ? ssignum32(Convert.ToInt32(-x)) : ssignum32(Convert.ToInt32(x));}
 static int usignum64(ulong x){return x < 0 ? ssignum64(Convert.ToInt64(0-x)) : ssignum64(Convert.ToInt64(x));}
 
+static int ssignum(sbyte x){return Math.Sign(x);}
+static int ssignum(short x){return Math.Sign(x);}
+static int ssignum(int x){return Math.Sign(x);}
+static int ssignum(long x){return Math.Sign(x);}
+
+static int usignum(byte x){return x < 0 ? ssignum8(Convert.ToSByte(-x)) : ssignum8(Convert.ToSByte(x));}
+static int usignum(ushort x){return x < 0 ? ssignum16(Convert.ToInt16(-x)) : ssignum16(Convert.ToInt16(x));}
+static int usignum(uint x){return x < 0 ? ssignum32(Convert.ToInt32(-x)) : ssignum32(Convert.ToInt32(x));}
+static int usignum(ulong x){return x < 0 ? ssignum64(Convert.ToInt64(0-x)) : ssignum64(Convert.ToInt64(x));}
+
 static float sitofp_i8_f32(sbyte x){return Convert.ToSingle(x);}
 static float sitofp_i16_f32(short x){return Convert.ToSingle(x);}
 static float sitofp_i32_f32(int x){return Convert.ToSingle(x);}

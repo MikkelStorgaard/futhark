@@ -27,12 +27,16 @@ compileProg module_name =
             operations () [] [])
   where imports = [ Using Nothing "System"
                   , Using Nothing "System.Diagnostics"
-                  , Using Nothing "System.ValueTuple"
-                  , Using Nothing "System.Convert"
-                  , Using Nothing "System.Math"
+                  , Using Nothing "System.Collections.Generic"
+                  , Using Nothing "System.IO"
+                  , Using Nothing "System.Linq"
+                  , Using Nothing "static System.ValueTuple"
+                  , Using Nothing "static System.Convert"
+                  , Using Nothing "static System.Math"
                   , Using Nothing "Mono.Options"
                   ]
-        defines = [Escape csScalar, Escape csMemory, Escape csExceptions]
+        defines = [ Escape csScalar, Escape csMemory
+                  , Escape csExceptions, Escape csReader]
         operations :: GenericCSharp.Operations Imp.Sequential ()
         operations = GenericCSharp.defaultOperations
                      { GenericCSharp.opsCompiler = const $ return ()

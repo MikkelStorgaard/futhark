@@ -234,8 +234,8 @@ paramType :: Imp.Param -> Imp.Type
 paramType (Imp.MemParam _ space) = Imp.Mem (Imp.ConstSize 0) space
 paramType (Imp.ScalarParam _ t) = Imp.Scalar t
 
-compileOutput :: [Imp.Param] -> [(CSExp, CSType)]
-compileOutput = map (nameFun &&& typeFun)
+compileOutput :: Imp.Param -> (CSExp, CSType)
+compileOutput = nameFun &&& typeFun
   where nameFun = Var . compileName . Imp.paramName
         typeFun = compileType . paramType
 
@@ -341,10 +341,10 @@ compileProg module_name constructor imports defines ops userstate pre_timing opt
 
               return [ClassDef $ Class name $ constructor' : defines ++ map FunDef definitions ++
                       map FunDef entry_point_defs ++
-                      [FunDef $ Def "main" VoidT [] $ parse_options ++ selectEntryPoint entry_point_names entry_points]]
+                      [StaticFunDef $ Def "Main" VoidT [] $ parse_options ++ selectEntryPoint entry_point_names entry_points]]
 
         parse_options =
-          AssignTyped "FileStream" (Var "runtime_file") Null :
+          AssignTyped (CustomT "FileStream") (Var "runtime_file") :
           Assign (Var "do_warmup_run") (Bool False) :
           Assign (Var "num_runs") (Integer 1) :
           Assign (Var "entry_point") (String "main") :
@@ -353,7 +353,7 @@ compileProg module_name constructor imports defines ops userstate pre_timing opt
         selectEntryPoint entry_point_names entry_points =
           [ Assign (Var "entry_points") $
               Collection "Dictionary<string, Action>" $ zipWith Pair (map String entry_point_names) entry_points,
-            If (simpleCall "!entry_points.Contains" [Var "entry_point"])
+            If (simpleCall "!entry_points.ContainsKey" [Var "entry_point"])
               [ Exp $ simpleCall "Console.WriteLine"
                   [simpleCall "string.Format"
                     [ String "No entry point '{}'.  Select another with --entry point.  Options are:\n{}"
@@ -371,12 +371,17 @@ compileFunc :: (Name, Imp.Function op) -> CompilerM op s CSFunDef
 compileFunc (fname, Imp.Function _ outputs inputs body _ _) = do
   body' <- collect $ compileCode body
   let inputs' = map compileTypedInput inputs
-  let outputs' = compileOutput outputs
+  let outputs' = map compileOutput outputs
+  let outputDecls = map getDecl outputs'
   let (ret, retType) = unzip outputs'
   let retType' = tupleOrSingleT retType
   let ret' = Return $ tupleOrSingle ret
 
-  return $ Def (futharkFun . nameToString $ fname) retType' inputs' (body'++[ret'])
+  return $ Def (futharkFun . nameToString $ fname) retType' inputs' (body'++outputDecls++[ret'])
+
+  where getDecl (v,t) = AssignTyped t v
+
+
 compileTypedInput :: Imp.Param -> (String, CSType)
 compileTypedInput input = (nameFun input, typeFun input)
   where nameFun = compileName . Imp.paramName
@@ -490,11 +495,9 @@ entryPointInput (i, Imp.TransparentValue (Imp.ScalarValue bt s name), e) = do
       -- pass e.g. int8 a number bigger than 2**7.  As a workaround,
       -- we first go through the corresponding ctypes type, which does
       -- not have this problem.
-      ctobject = compilePrimType bt
-      ctcall = simpleCall ctobject [e]
-      npobject = compileTypeConverter bt
-      npcall = simpleCall npobject [ctcall]
-  stm $ Try [Assign vname' npcall]
+      csconverter = compileTypeConverter bt
+      cscall = simpleCall csconverter [e]
+  stm $ Try [Assign vname' cscall]
     [Catch (Var "Exception") [badInput i (getCSExpType e) $ prettySigned (s==Imp.TypeUnsigned) bt]]
 
 entryPointInput (i, Imp.TransparentValue (Imp.ArrayValue mem memsize Imp.DefaultSpace t s dims), e) = do
@@ -629,8 +632,8 @@ printStm (Imp.ArrayValue mem memsize space bt ept (outer:shape)) e = do
   first <- newVName "print_first"
   let size = callMethod (CreateArray (Primitive $ CSInt Int32T) $ map compileDim $ outer:shape)
                  "Aggregate" [ Integer 1
-                             , Lambda (Tuple [Var "acc", Var "val"]) 
-                                      [Exp (BinOp "*" (Var "acc") (Var "val"))]
+                             , Lambda (Tuple [Var "acc", Var "val"])
+                                      [Exp $ BinOp "*" (Var "acc") (Var "val")]
                              ]
       emptystr = "empty(" ++ ppArrayType bt (length shape) ++ ")"
   printelem <- printStm (Imp.ArrayValue mem memsize space bt ept shape) $ Var $ compileName v
@@ -639,10 +642,10 @@ printStm (Imp.ArrayValue mem memsize space bt ept (outer:shape)) e = do
     [Assign (Var $ pretty first) $ Var "true",
      puts "[",
      For (pretty v) e [
-        If (simpleCall "not" [Var $ pretty first])
+        If (simpleCall "!" [Var $ pretty first])
         [puts ", "] [],
         printelem,
-        Assign (Var $ pretty first) $ Var "false"
+        Reassign (Var $ pretty first) $ Var "false"
     ],
     puts "]"]
     where ppArrayType :: PrimType -> Int -> String
@@ -759,8 +762,7 @@ callEntryFun pre_timing entry@(fname, Imp.Function _ _ _ _ _ decl_args) = do
         If (Var "do_warmup_run") (prepare_run ++ do_run) []
 
       do_num_runs =
-        For "i" (simpleCall "Enumerable.Range" [Integer 0, Var "num_runs"])
-        (prepare_run ++ do_run_with_timing)
+        For "i" (Var "num_runs") (prepare_run ++ do_run_with_timing)
 
   str_output <- printValue res
 
@@ -799,8 +801,8 @@ compileUnOp op =
   case op of
     Not -> "!"
     Complement{} -> "~"
-    Abs{} -> "abs" -- actually write these helpers
-    FAbs{} -> "abs"
+    Abs{} -> "Math.Abs" -- actually write these helpers
+    FAbs{} -> "Math.Abs"
     SSignum{} -> "ssignum"
     USignum{} -> "usignum"
 
@@ -1034,18 +1036,20 @@ compileCode (Imp.For i it bound body) = do
   one <- pretty <$> newVName "one"
   stm $ Assign (Var i') $ simpleCall (compileTypeConverter (IntType it)) [Integer 0]
   stm $ Assign (Var one) $ simpleCall (compileTypeConverter (IntType it)) [Integer 1]
-  stm $ For counter (simpleCall "Enumerable.Range" [Integer 0, bound']) $
-    body' ++ [AssignOp "+" (Var i') (Var one)]
+  stm $ For counter bound' body'
 
 compileCode (Imp.SetScalar vname exp1) = do
   let name' = Var $ compileName vname
   exp1' <- compileExp exp1
-  stm $ Assign name' exp1'
+  stm $ Reassign name' exp1'
 
-compileCode Imp.DeclareMem{} = return ()
+compileCode (Imp.DeclareMem v _) =
+  stm $ AssignTyped (Composite $ ArrayT $ Primitive ByteT) (Var $ compileName v)
 compileCode (Imp.DeclareScalar v Cert) =
   stm $ Assign (Var $ compileName v) $ Bool True
-compileCode Imp.DeclareScalar{} = return ()
+compileCode (Imp.DeclareScalar v t) =
+  stm $ AssignTyped t' (Var $ compileName v)
+  where t' = compilePrimTypeToAST t
 
 compileCode (Imp.DeclareArray name DefaultSpace t vs) = do
   atInit $ Assign (Var $ "init_"++name') $
@@ -1080,20 +1084,20 @@ compileCode (Imp.Call dests fname args) = do
   -- effects), take care not to assign to an empty tuple.
   stm $ if null dests
         then Exp call'
-        else Assign dests' call'
+        else Reassign dests' call'
   where compileArg (Imp.MemArg m) = return $ Var $ compileName m
         compileArg (Imp.ExpArg e) = compileExp e
 
 compileCode (Imp.SetMem dest src _) = do
   let src' = Var (compileName src)
   let dest' = Var (compileName dest)
-  stm $ Assign dest' src'
+  stm $ Reassign dest' src'
 
 compileCode (Imp.Allocate name (Imp.Count e) DefaultSpace) = do
   e' <- compileExp e
   let allocate' = simpleCall "allocateMem" [e']
   let name' = Var (compileName name)
-  stm $ Assign name' allocate'
+  stm $ Reassign name' allocate'
 
 compileCode (Imp.Allocate name (Imp.Count e) (Imp.Space space)) =
   join $ asks envAllocate

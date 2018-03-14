@@ -146,14 +146,16 @@ instance Pretty CSExp where
   ppr (Call fun args) = ppr fun <> parens(commasep $ map ppr args)
   ppr (CallMethod obj method args) = ppr obj <> dot <> ppr method <> parens(commasep $ map ppr args)
   ppr (CreateObject className args) = text "new" <+> ppr className <> parens(commasep $ map ppr args)
-  ppr (CreateArray t dims) = text "new[]" <+> braces(commasep $ map ppr dims)
+  ppr (CreateArray _ dims) = text "new[]" <+> braces(commasep $ map ppr dims)
   ppr (Tuple exps) = parens(commasep $ map ppr exps)
   ppr (Array exps) = braces(commasep $ map ppr exps) -- uhoh is this right?
   ppr (Field obj field) = ppr obj <> dot <> text field
+  ppr (Lambda expr [Exp e]) = ppr expr <+> text "=>" <+> ppr e
   ppr (Lambda expr stmts) = ppr expr <+> text "=>" <+> braces(stack $ map ppr stmts)
   ppr (Collection collection exps) = text "new "<> text collection <> text "()" <> braces(commasep $ map ppr exps)
   ppr Null = text "null"
   --ppr (Dict exps) = undefined
+
 
 data CSIdx = IdxRange CSExp CSExp
                | IdxExp CSExp
@@ -178,7 +180,7 @@ data CSStmt = If CSExp [CSStmt] [CSStmt]
             | Assign CSExp CSExp
             | Reassign CSExp CSExp
             | AssignOp String CSExp CSExp
-            | AssignTyped String CSExp CSExp
+            | AssignTyped CSType CSExp
 
             | Comment String [CSStmt]
             | Assert CSExp String
@@ -188,6 +190,7 @@ data CSStmt = If CSExp [CSStmt] [CSStmt]
             | Pass
               -- Definition-like statements.
             | Using (Maybe String) String
+            | StaticFunDef CSFunDef
             | FunDef CSFunDef
             | ClassDef CSClassDef
             | ConstructorDef CSConstructorDef
@@ -221,10 +224,13 @@ instance Pretty CSStmt where
     rbrace
 
   ppr (For i what body) =
-    text "foreach" <+> parens(text "var" <+> text i <+> text "in" <+> ppr what) </>
+    text "for" <+> parens(initialize <> limit <> inc) </>
     lbrace </>
     indent 4 (stack $ map ppr body) </>
     rbrace
+    where initialize = text "int" <+> text i <+> text "= 0" <+> semi
+          limit = text i <+> langle <+> ppr what <+> semi
+          inc = text i <> text "++"
 
   ppr (Using (Just as) from) =
     text "using" <+> text as <+> text "=" <+> text from <> semi
@@ -246,14 +252,14 @@ instance Pretty CSStmt where
 
   ppr (Assign e1 e2) = text "var" <+> ppr e1 <+> text "=" <+> ppr e2 <> semi
   ppr (Reassign e1 e2) = ppr e1 <+> text "=" <+> ppr e2 <> semi
-  ppr (AssignTyped s e1 e2) = text s <+> ppr e1 <+> text "=" <+> ppr e2 <> semi
+  ppr (AssignTyped t e1) = ppr t <+> ppr e1 <> semi
 
   ppr (AssignOp op e1 e2) = ppr e1 <+> text (op ++ "=") <+> ppr e2 <> semi
 
   ppr (Comment s body) = text "//" <> text s </> stack (map ppr body)
 
   ppr (Assert e s) =
-    text "Debug.Assert" <> parens(ppr e <> text "," <+> squotes(text s)) <> semi
+    text "Debug.Assert" <> parens(ppr e <> text "," <+> dquotes(text s)) <> semi
 
   ppr (Throw e) = text "throw" <+> ppr e <> semi
 
@@ -262,6 +268,8 @@ instance Pretty CSStmt where
   ppr (Return e) = text "return" <+> ppr e <> semi
 
   ppr (ClassDef d) = ppr d
+
+  ppr (StaticFunDef d) = text "static" <+> ppr d
 
   ppr (FunDef d) = ppr d
 

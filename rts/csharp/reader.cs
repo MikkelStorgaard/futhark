@@ -291,7 +291,7 @@
     {
         SkipSpaces(f);
         var c = GetChar(f);
-        char sign = '';
+        char sign;
         if (c.Value == '-')
         {
             sign = '-';
@@ -299,7 +299,7 @@
         else
         {
             UngetChar(c.Value);
-            sign = '';
+            sign = '+';
         }
         
         // Check for hexadecimal float
@@ -388,7 +388,7 @@
     {
         return ReadStrI32(f);
     }
-    long read_i32(Stream f)
+    long read_i64(Stream f)
     {
         return ReadStrI64(f);
     }

@@ -55,7 +55,35 @@ public class Opaque{
     }
 }
 
+byte[] allocateMem(sbyte size)
+{
+    return new byte[size];
+}
+byte[] allocateMem(short size)
+{
+    return new byte[size];
+}
 byte[] allocateMem(int size)
+{
+    return new byte[size];
+}
+byte[] allocateMem(long size)
+{
+    return new byte[size];
+}
+byte[] allocateMem(byte size)
+{
+    return new byte[size];
+}
+byte[] allocateMem(ushort size)
+{
+    return new byte[size];
+}
+byte[] allocateMem(uint size)
+{
+    return new byte[size];
+}
+byte[] allocateMem(ulong size)
 {
     return new byte[size];
 }
