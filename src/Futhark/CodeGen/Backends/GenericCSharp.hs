@@ -625,7 +625,10 @@ printStm (Imp.ArrayValue mem memsize space bt ept (outer:shape)) e = do
   v <- newVName "print_elem"
   first <- newVName "print_first"
   let size = callMethod (CreateArray (Primitive $ CSInt Int32T) $ map compileDim $ outer:shape)
-                 "Aggregate" [Integer 1, String "(acc, val) => acc * val"]
+                 "Aggregate" [ Integer 1
+                             , Lambda (Tuple [Var "acc", Var "val"]) 
+                                      [Exp (BinOp "*" (Var "acc") (Var "val"))]
+                             ]
       emptystr = "empty(" ++ ppArrayType bt (length shape) ++ ")"
   printelem <- printStm (Imp.ArrayValue mem memsize space bt ept shape) $ Var $ compileName v
   return $ If (BinOp "==" size (Integer 0))

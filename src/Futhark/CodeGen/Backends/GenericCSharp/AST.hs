@@ -98,31 +98,31 @@ data UnOp = Not -- ^ Boolean negation.
             deriving (Eq, Show)
 
 data CSExp = Integer Integer
-               | Bool Bool
-               | Float Double
-               | String String
-               | RawStringLiteral String
-               | Var String
-               | Ref String
-               | Deref String
-               | BinOp String CSExp CSExp
-               | UnOp String CSExp
-               | Cond CSExp CSExp CSExp
-               | Index CSExp CSIdx
-               | Pair CSExp CSExp
-               | Call CSExp [CSArg]
-               | CallMethod CSExp CSExp [CSArg]
-               | CreateObject CSExp [CSArg]
-               | CreateArray CSType [CSExp]
-               | Cast CSExp String
-               | Tuple [CSExp]
-               | Array [CSExp]
-               | Field CSExp String
-               | Lambda CSExp [CSStmt]
-               | Collection String [CSExp]
-               | Null
-               -- | Dict [(CSExp, CSExp)]
-               deriving (Eq, Show)
+           | Bool Bool
+           | Float Double
+           | String String
+           | RawStringLiteral String
+           | Var String
+           | Ref String
+           | Deref String
+           | BinOp String CSExp CSExp
+           | UnOp String CSExp
+           | Cond CSExp CSExp CSExp
+           | Index CSExp CSIdx
+           | Pair CSExp CSExp
+           | Call CSExp [CSArg]
+           | CallMethod CSExp CSExp [CSArg]
+           | CreateObject CSExp [CSArg]
+           | CreateArray CSType [CSExp]
+           | Cast CSExp String
+           | Tuple [CSExp]
+           | Array [CSExp]
+           | Field CSExp String
+           | Lambda CSExp [CSStmt]
+           | Collection String [CSExp]
+           | Null
+           -- | Dict [(CSExp, CSExp)]
+           deriving (Eq, Show)
 
 instance Pretty CSExp where
   ppr (Integer x) = ppr x
@@ -212,7 +212,7 @@ instance Pretty CSStmt where
     lbrace </>
     indent 4 (stack $ map ppr stmts) </>
     rbrace </>
-    ppr excepts
+    (stack $ map ppr excepts)
 
   ppr (While cond body) =
     text "while" <+> parens(ppr cond) </>
