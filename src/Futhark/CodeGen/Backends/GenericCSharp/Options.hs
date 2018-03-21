@@ -33,7 +33,15 @@ data OptionArgument = NoArgument
 -- terminate with error code 1.
 generateOptionParser :: [Option] -> [CSStmt]
 generateOptionParser options =
-  [ Assign (Var "options") (Collection "OptionSet" $ map parseOption options) ]
+  [ Assign (Var "options") (Collection "OptionSet" $ map parseOption options)
+  , Assign (Var "extra") (Call (Var "options.Parse") [Arg Nothing (Var "args")])
+  ]
+    -- generate options
+    -- try 
+    --   parse options
+    -- catch 
+    --   write help
+    --   write options
   where parseOption option = Array [ String $ option_string option
                                    , Lambda (Var "optarg") $ optionAction option ]
         option_string option = case optionArgument option of
