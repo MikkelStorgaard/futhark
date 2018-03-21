@@ -247,6 +247,15 @@ compileOutput = nameFun &&& typeFun
 --runCompilerM prog ops src userstate (CompilerM m) =
 --  fst $ evalRWS m (newCompilerEnv prog ops) (newCompilerState src userstate)
 
+getDefaultDecl :: Imp.Param -> CSStmt
+getDefaultDecl (Imp.MemParam v _) =
+  Assign (Var $ compileName v) $ simpleCall "allocateMem" [Integer 0]
+getDefaultDecl (Imp.ScalarParam v Cert) =
+  Assign (Var $ compileName v) $ Bool True
+getDefaultDecl (Imp.ScalarParam v t) =
+  Assign (Var $ compileName v) $ simpleInitClass (compilePrimType t) []
+
+
 runCompilerM :: Imp.Functions op -> Operations op s
              -> VNameSource
              -> s
@@ -266,13 +275,15 @@ standardOptions = [
              [Exp $ simpleCall "runtime_file.Close" []] []
            , Reassign (Var "runtime_file") $
              simpleInitClass "FileStream" [Var "optarg", Var "FileMode.Create"]
+           , Reassign (Var "runtime_file_writer") $
+             simpleInitClass "StreamWriter" [Var "runtime_file"]
            ]
          },
   Option { optionLongName = "runs"
          , optionShortName = Just 'r'
          , optionArgument = RequiredArgument
          , optionAction =
-           [ Reassign (Var "num_runs") $ Var "optarg"
+           [ Reassign (Var "num_runs") $ simpleCall "Convert.ToInt32" [Var "optarg"]
            , Reassign (Var "do_warmup_run") $ Bool True
            ]
          },
@@ -333,21 +344,34 @@ compileProg module_name constructor imports defines ops userstate pre_timing opt
 
 
             Nothing -> do
-              let name = "Program"
+              let name = "FutharkInternal"
               let constructor' = constructorToConstructorDef constructor name at_inits
               (entry_point_defs, entry_point_names, entry_points) <-
                 unzip3 <$> mapM (callEntryFun pre_timing)
                 (filter (Imp.functionEntry . snd) funs)
 
-              return [ClassDef $ Class name $ constructor' : defines ++ map FunDef definitions ++
-                      map FunDef entry_point_defs ++
-                      [StaticFunDef $ Def "Main" VoidT [] $ parse_options ++ selectEntryPoint entry_point_names entry_points]]
+              return ((ClassDef $
+                       Class name $
+                         constructor' : defines ++ map FunDef (definitions ++ entry_point_defs) ++
+                         member_decls ++
+                         [PublicFunDef $ Def "internal_entry" VoidT [] $
+                           parse_options ++ selectEntryPoint entry_point_names entry_points]) :
+                     [ClassDef $ Class "Program" [StaticFunDef $ Def "Main" VoidT [] main_entry]])
+
+
+        main_entry :: [CSStmt]
+        main_entry = [ Assign (Var "internal_instance") (simpleInitClass "FutharkInternal" [])
+                     , Exp $ simpleCall "internal_instance.internal_entry" []
+                     ]
+
+        member_decls =
+          [ AssignTyped (CustomT "FileStream") (Var "runtime_file") Nothing
+          , AssignTyped (CustomT "StreamWriter") (Var "runtime_file_writer") Nothing
+          , AssignTyped (Primitive BoolT) (Var "do_warmup_run") (Just $ Bool False)
+          , AssignTyped (Primitive $ CSInt Int32T) (Var "num_runs") (Just $ Integer 1)
+          , AssignTyped (Primitive StringT) (Var "entry_point") (Just $ String "main")]
 
         parse_options =
-          AssignTyped (CustomT "FileStream") (Var "runtime_file") :
-          Assign (Var "do_warmup_run") (Bool False) :
-          Assign (Var "num_runs") (Integer 1) :
-          Assign (Var "entry_point") (String "main") :
           generateOptionParser (standardOptions ++ options)
 
         selectEntryPoint entry_point_names entry_points =
@@ -372,14 +396,15 @@ compileFunc (fname, Imp.Function _ outputs inputs body _ _) = do
   body' <- collect $ compileCode body
   let inputs' = map compileTypedInput inputs
   let outputs' = map compileOutput outputs
-  let outputDecls = map getDecl outputs'
+  let outputDecls = map getDefaultDecl outputs
   let (ret, retType) = unzip outputs'
   let retType' = tupleOrSingleT retType
   let ret' = Return $ tupleOrSingle ret
 
-  return $ Def (futharkFun . nameToString $ fname) retType' inputs' (body'++outputDecls++[ret'])
+  return $ Def (futharkFun . nameToString $ fname) retType' inputs' (outputDecls++body'++[ret'])
 
-  where getDecl (v,t) = AssignTyped t v
+getDecl :: (CSExp, CSType) -> CSStmt
+getDecl (v,t) = AssignTyped t v Nothing
 
 
 compileTypedInput :: Imp.Param -> (String, CSType)
@@ -463,8 +488,9 @@ entryPointOutput (Imp.TransparentValue (Imp.ScalarValue bt ept name)) =
   where tf = compileTypeConverterExt bt ept
 
 entryPointOutput (Imp.TransparentValue (Imp.ArrayValue mem _ Imp.DefaultSpace bt ept dims)) = do
-  let cast = Cast (Var $ compileName mem) (compilePrimTypeExt bt ept)
-  return $ simpleCall "createArray" [cast, Tuple $ map compileDim dims]
+  let src = Var $ compileName mem
+  let createArray = "createArray_" ++ compilePrimTypeExt bt ept
+  return $ simpleCall createArray [src, CreateArray (Primitive $ CSInt Int64T) $ map compileDim dims]
 
 entryPointOutput (Imp.TransparentValue (Imp.ArrayValue mem _ (Imp.Space sid) bt ept dims)) = do
   pack_output <- asks envEntryOutput
@@ -497,8 +523,7 @@ entryPointInput (i, Imp.TransparentValue (Imp.ScalarValue bt s name), e) = do
       -- not have this problem.
       csconverter = compileTypeConverter bt
       cscall = simpleCall csconverter [e]
-  stm $ Try [Assign vname' cscall]
-    [Catch (Var "Exception") [badInput i (getCSExpType e) $ prettySigned (s==Imp.TypeUnsigned) bt]]
+  stm $ Assign vname' cscall
 
 entryPointInput (i, Imp.TransparentValue (Imp.ArrayValue mem memsize Imp.DefaultSpace t s dims), e) = do
   let type_is_wrong =
@@ -526,11 +551,7 @@ entryPointInput (i, Imp.TransparentValue (Imp.ArrayValue mem memsize Imp.Default
 entryPointInput (i, Imp.TransparentValue (Imp.ArrayValue mem memsize (Imp.Space sid) bt ept dims), e) = do
   unpack_input <- asks envEntryInput
   unpack <- collect $ unpack_input mem memsize sid bt ept dims e
-  stm $ Try unpack $
-    map (\except -> Catch except 
-     [badInput i (getCSExpType e) $ concat (replicate (length dims) "[]") ++
-     prettySigned (ept==Imp.TypeUnsigned) bt])
-    [Var "TypeError", Var "AssertionError"]
+  stms unpack
 
 extValueDescName :: Imp.ExternalValue -> String
 extValueDescName (Imp.TransparentValue v) = extName $ valueDescName v
@@ -578,23 +599,21 @@ readTypeEnum (FloatType Float64) _ = "FUTHARK_FLOAT64"
 readTypeEnum Imp.Bool _ = "FUTHARK_BOOL"
 readTypeEnum Cert _ = error "readTypeEnum: cert"
 
-readInput :: Imp.ExternalValue -> CSStmt
-readInput (Imp.OpaqueValue desc _) =
+readInput :: Imp.ExternalValue -> CSExp -> CSStmt
+readInput (Imp.OpaqueValue desc _) _ =
   Throw $ simpleInitClass "Exception" [String $ "Cannot read argument of type " ++ desc ++ "."]
 
-readInput decl@(Imp.TransparentValue (Imp.ScalarValue bt ept _)) =
+readInput decl@(Imp.TransparentValue (Imp.ScalarValue bt ept _)) stdin =
   let reader' = readFun bt ept
-      stdin = simpleCall "getStream" []
   in Assign (Var $ extValueDescName decl) $ simpleCall reader' [stdin]
 
 -- TODO: If the type identifier of 'Float32' is changed, currently the error
 -- messages for reading binary input will not use this new name. This is also a
 -- problem for the C runtime system.
-readInput decl@(Imp.TransparentValue (Imp.ArrayValue _ _ _ bt ept dims)) =
+readInput decl@(Imp.TransparentValue (Imp.ArrayValue _ _ _ bt ept dims)) stdin =
   let rank' = Var $ show $ length dims
       type_enum = Var $ readTypeEnum bt ept
       ct = Var $ compileTypeConverterExt bt ept
-      stdin = simpleCall "getStream" []
   in Assign (Var $ extValueDescName decl) $ simpleCall "read_array"
      [stdin, type_enum, rank', ct]
 
@@ -641,7 +660,7 @@ printStm (Imp.ArrayValue mem memsize space bt ept (outer:shape)) e = do
     [puts emptystr]
     [Assign (Var $ pretty first) $ Var "true",
      puts "[",
-     For (pretty v) e [
+     ForEach (pretty v) e [
         If (simpleCall "!" [Var $ pretty first])
         [puts ", "] [],
         printelem,
@@ -702,7 +721,7 @@ prepareEntry (fname, Imp.Function _ outputs inputs _ results args) = do
                        (simpleCall "allocateMem" [size]) -- FIXME
         Space sid ->
           allocate name' size sid
-      copy dest offset space src offset space size (IntType Int32) -- FIXME
+      copy dest offset space src offset space size (IntType Int64) -- FIXME
       return $ Just $ compileName name'
     _ -> return Nothing
 
@@ -716,8 +735,8 @@ prepareEntry (fname, Imp.Function _ outputs inputs _ results args) = do
       arg_types = map (snd . compileTypedInput) inputs
       inputs' = zip (map extValueDescName args) arg_types
       output_type = tupleOrSingleT output_types
-      call_lib = [Assign funTuple $ simpleCall fname' (fmap Var argexps_lib)]
-      call_bin = [Assign funTuple $ simpleCall fname' (fmap Var argexps_bin)]
+      call_lib = [Reassign funTuple $ simpleCall fname' (fmap Var argexps_lib)]
+      call_bin = [Reassign funTuple $ simpleCall fname' (fmap Var argexps_bin)]
 
   return (nameToString fname, inputs', output_type,
           prepareIn, call_lib, call_bin, prepareOut,
@@ -742,16 +761,18 @@ compileEntryFun entry = do
 
 callEntryFun :: [CSStmt] -> (Name, Imp.Function op)
              -> CompilerM op s (CSFunDef, String, CSExp)
-callEntryFun pre_timing entry@(fname, Imp.Function _ _ _ _ _ decl_args) = do
+callEntryFun pre_timing entry@(fname, Imp.Function _ outputs _ _ _ decl_args) = do
   (_, _, outputType, prepareIn, _, body_bin, _, res, prepare_run) <- prepareEntry entry
 
-  let str_input = map readInput decl_args
-
+  let stdin = Var "stdin_stream"
+  let get_reader = [Assign stdin $ simpleCall "getStream" []]
+  let str_input = map (`readInput` stdin) decl_args
+  let outputDecls = map getDefaultDecl outputs
       exitcall = [
           Exp $ simpleCall "Console.WriteLine" [formatString "Assertion.{} failed" [Var "e"]]
         , Exp $ simpleCall "Environment.Exit" [Integer 1]
         ]
-      except' = Catch (Var "AssertFailedException") exitcall
+      except' = Catch (Var "Exception") exitcall
       do_run = body_bin ++ pre_timing
       (do_run_with_timing, close_runtime_file) = addTiming do_run
 
@@ -768,8 +789,8 @@ callEntryFun pre_timing entry@(fname, Imp.Function _ _ _ _ _ decl_args) = do
 
   let fname' = "entry_" ++ nameToString fname
 
-  return (Def fname' outputType [] $
-           str_input ++ prepareIn ++
+  return (Def fname' VoidT [] $
+           get_reader ++ str_input ++ prepareIn ++ outputDecls ++
            [Try [do_warmup_run, do_num_runs] [except']] ++
            [close_runtime_file] ++
            str_output,
@@ -785,16 +806,18 @@ addTiming statements =
    , Exp $ simpleCall "stop_watch.Start" [] ] ++
    statements ++
    [ Exp $ simpleCall "stop_watch.Stop" []
-   , Assign (Var "time_elapsed") $ Field (Var "stop_watch") "ElapsedMillisconds"
-   , If (Var "runtime_file") print_runtime [] ],
-   If (Var "runtime_file") [Exp $ simpleCall "runtime_file.Close" []] []
+   , Assign (Var "time_elapsed") $ Field (Var "stop_watch") "ElapsedMilliseconds"
+   , If (not_null (Var "runtime_file")) print_runtime [] ],
+   If (not_null (Var "runtime_file")) [Exp $ simpleCall "runtime_file.Close" []] []
   )
   where print_runtime =
-          [Exp $ simpleCall "runtime_file.WriteLine"
+          [Exp $ simpleCall "runtime_file_writer.WriteLine"
            [ callMethod (toMicroseconds (Var "time_elapsed")) "ToString" [] ],
-           Exp $ simpleCall "runtime_file.WriteLine" [String "\n"]]
+           Exp $ simpleCall "runtime_file_writer.WriteLine" [String "\n"]]
         toMicroseconds x =
           BinOp "*" x $ Integer 1000000
+
+        not_null var = BinOp "!=" var Null
 
 compileUnOp :: Imp.UnOp -> String
 compileUnOp op =
@@ -955,7 +978,7 @@ compileExp (Imp.LeafExp (Imp.ScalarVar vname) _) =
   return $ Var $ compileName vname
 
 compileExp (Imp.LeafExp (Imp.SizeOf t) _) =
-  return $ simpleCall (compileTypeConverter $ IntType Int32) [Integer $ primByteSize t]
+  return $ simpleCall (compileTypeConverter $ IntType Int64) [Integer $ primByteSize t]
 
 compileExp (Imp.LeafExp (Imp.Index src (Imp.Count iexp) bt DefaultSpace _) _) = do
   iexp' <- compileExp iexp
@@ -1044,11 +1067,11 @@ compileCode (Imp.SetScalar vname exp1) = do
   stm $ Reassign name' exp1'
 
 compileCode (Imp.DeclareMem v _) =
-  stm $ AssignTyped (Composite $ ArrayT $ Primitive ByteT) (Var $ compileName v)
+  stm $ AssignTyped (Composite $ ArrayT $ Primitive ByteT) (Var $ compileName v) Nothing
 compileCode (Imp.DeclareScalar v Cert) =
   stm $ Assign (Var $ compileName v) $ Bool True
 compileCode (Imp.DeclareScalar v t) =
-  stm $ AssignTyped t' (Var $ compileName v)
+  stm $ AssignTyped t' (Var $ compileName v) Nothing
   where t' = compilePrimTypeToAST t
 
 compileCode (Imp.DeclareArray name DefaultSpace t vs) = do
@@ -1118,7 +1141,7 @@ compileCode (Imp.Copy dest (Imp.Count destoffset) destspace src (Imp.Count srcof
   join $ copy
     <$> pure dest <*> compileExp destoffset <*> pure destspace
     <*> pure src <*> compileExp srcoffset <*> pure srcspace
-    <*> compileExp size <*> pure (IntType Int32) -- FIXME
+    <*> compileExp size <*> pure (IntType Int64) -- FIXME
 
 compileCode (Imp.Write dest (Imp.Count idx) elemtype DefaultSpace _ elemexp) = do
   idx' <- compileExp idx

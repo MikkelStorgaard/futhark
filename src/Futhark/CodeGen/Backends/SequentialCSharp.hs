@@ -27,6 +27,7 @@ compileProg module_name =
             operations () [] [])
   where imports = [ Using Nothing "System"
                   , Using Nothing "System.Diagnostics"
+                  , Using Nothing "System.Collections"
                   , Using Nothing "System.Collections.Generic"
                   , Using Nothing "System.IO"
                   , Using Nothing "System.Linq"

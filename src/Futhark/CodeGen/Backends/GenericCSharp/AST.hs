@@ -65,6 +65,7 @@ data CSPrim = CSInt CSInt
             | CSFloat CSFloat
             | BoolT
             | ByteT
+            | StringT
             deriving (Eq, Show)
 
 instance Pretty CSType where
@@ -80,6 +81,7 @@ instance Pretty CSPrim where
   ppr ByteT = text "byte"
   ppr (CSInt t) = ppr t
   ppr (CSFloat t) = ppr t
+  ppr StringT = text "string"
 
 instance Pretty CSInt where
   ppr Int8T = text "byte"
@@ -146,13 +148,13 @@ instance Pretty CSExp where
   ppr (Call fun args) = ppr fun <> parens(commasep $ map ppr args)
   ppr (CallMethod obj method args) = ppr obj <> dot <> ppr method <> parens(commasep $ map ppr args)
   ppr (CreateObject className args) = text "new" <+> ppr className <> parens(commasep $ map ppr args)
-  ppr (CreateArray _ dims) = text "new[]" <+> braces(commasep $ map ppr dims)
+  ppr (CreateArray t dims) = text "new" <+> ppr t <> text "[]" <+> braces(commasep $ map ppr dims)
   ppr (Tuple exps) = parens(commasep $ map ppr exps)
   ppr (Array exps) = braces(commasep $ map ppr exps) -- uhoh is this right?
   ppr (Field obj field) = ppr obj <> dot <> text field
   ppr (Lambda expr [Exp e]) = ppr expr <+> text "=>" <+> ppr e
   ppr (Lambda expr stmts) = ppr expr <+> text "=>" <+> braces(stack $ map ppr stmts)
-  ppr (Collection collection exps) = text "new "<> text collection <> text "()" <> braces(commasep $ map ppr exps)
+  ppr (Collection collection exps) = text "new "<> text collection <> braces(commasep $ map ppr exps)
   ppr Null = text "null"
   --ppr (Dict exps) = undefined
 
@@ -174,13 +176,14 @@ data CSStmt = If CSExp [CSStmt] [CSStmt]
             | Try [CSStmt] [CSExcept]
             | While CSExp [CSStmt]
             | For String CSExp [CSStmt]
+            | ForEach String CSExp [CSStmt]
             | UsingWith CSStmt [CSStmt]
             | Unsafe [CSStmt]
 
             | Assign CSExp CSExp
             | Reassign CSExp CSExp
             | AssignOp String CSExp CSExp
-            | AssignTyped CSType CSExp
+            | AssignTyped CSType CSExp (Maybe CSExp)
 
             | Comment String [CSStmt]
             | Assert CSExp String
@@ -191,6 +194,7 @@ data CSStmt = If CSExp [CSStmt] [CSStmt]
               -- Definition-like statements.
             | Using (Maybe String) String
             | StaticFunDef CSFunDef
+            | PublicFunDef CSFunDef
             | FunDef CSFunDef
             | ClassDef CSClassDef
             | ConstructorDef CSConstructorDef
@@ -215,7 +219,7 @@ instance Pretty CSStmt where
     lbrace </>
     indent 4 (stack $ map ppr stmts) </>
     rbrace </>
-    (stack $ map ppr excepts)
+    stack (map ppr excepts)
 
   ppr (While cond body) =
     text "while" <+> parens(ppr cond) </>
@@ -231,6 +235,13 @@ instance Pretty CSStmt where
     where initialize = text "int" <+> text i <+> text "= 0" <+> semi
           limit = text i <+> langle <+> ppr what <+> semi
           inc = text i <> text "++"
+
+  ppr (ForEach i what body) =
+    text "foreach" <+> parens initialize </>
+    lbrace </>
+    indent 4 (stack $ map ppr body) </>
+    rbrace
+    where initialize = text "var" <+> text i <+> text "in " <+> ppr what
 
   ppr (Using (Just as) from) =
     text "using" <+> text as <+> text "=" <+> text from <> semi
@@ -250,9 +261,10 @@ instance Pretty CSStmt where
     indent 4 (stack $ map ppr body) </>
     rbrace
 
-  ppr (Assign e1 e2) = text "var" <+> ppr e1 <+> text "=" <+> ppr e2 <> semi
-  ppr (Reassign e1 e2) = ppr e1 <+> text "=" <+> ppr e2 <> semi
-  ppr (AssignTyped t e1) = ppr t <+> ppr e1 <> semi
+  ppr (Assign e1 e2) = text "var" <+> ppr e1 <+> equals <+> ppr e2 <> semi
+  ppr (Reassign e1 e2) = ppr e1 <+> equals <+> ppr e2 <> semi
+  ppr (AssignTyped t e1 Nothing) = ppr t <+> ppr e1 <> semi
+  ppr (AssignTyped t e1 (Just e2)) = ppr t <+> ppr e1 <+> equals <+> ppr e2 <> semi
 
   ppr (AssignOp op e1 e2) = ppr e1 <+> text (op ++ "=") <+> ppr e2 <> semi
 
@@ -270,6 +282,8 @@ instance Pretty CSStmt where
   ppr (ClassDef d) = ppr d
 
   ppr (StaticFunDef d) = text "static" <+> ppr d
+
+  ppr (PublicFunDef d) = text "public" <+> ppr d
 
   ppr (FunDef d) = ppr d
 
