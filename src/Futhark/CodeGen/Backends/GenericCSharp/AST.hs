@@ -34,6 +34,7 @@ data ArgMemType = ArgOut
 instance Pretty ArgMemType where
   ppr ArgOut = text "out"
   ppr ArgRef = text "ref"
+  ppr Reference = text "&"
 
 instance Pretty CSComp where
   ppr (ArrayT t) = ppr t <> text "[]"
@@ -66,6 +67,7 @@ data CSPrim = CSInt CSInt
             | BoolT
             | ByteT
             | StringT
+            | IntPtrT
             deriving (Eq, Show)
 
 instance Pretty CSType where
@@ -73,8 +75,8 @@ instance Pretty CSType where
   ppr (PointerT t) = parens(ppr t <> text "*")
   ppr (Primitive t) = ppr t
   ppr (CustomT t) = text t
-  ppr VoidT = text "void"
   ppr (MemoryT _) = text "byte[]"
+  ppr VoidT = text "void"
 
 instance Pretty CSPrim where
   ppr BoolT = text "bool"
@@ -82,6 +84,7 @@ instance Pretty CSPrim where
   ppr (CSInt t) = ppr t
   ppr (CSFloat t) = ppr t
   ppr StringT = text "string"
+  ppr IntPtrT = text "IntPtr"
 
 instance Pretty CSInt where
   ppr Int8T = text "byte"
@@ -105,7 +108,7 @@ data CSExp = Integer Integer
            | String String
            | RawStringLiteral String
            | Var String
-           | Ref String
+           | Ref CSExp
            | Deref String
            | BinOp String CSExp CSExp
            | UnOp String CSExp
@@ -116,7 +119,7 @@ data CSExp = Integer Integer
            | CallMethod CSExp CSExp [CSArg]
            | CreateObject CSExp [CSArg]
            | CreateArray CSType [CSExp]
-           | Cast CSExp String
+           | Cast CSType CSExp
            | Tuple [CSExp]
            | Array [CSExp]
            | Field CSExp String
@@ -136,12 +139,12 @@ instance Pretty CSExp where
   ppr (String x) = text $ show x
   ppr (RawStringLiteral s) = text "@\"" <> text s <> text "\""
   ppr (Var n) = text $ map (\x -> if x == '\'' then 'm' else x) n
-  ppr (Ref n) =  text "&" <> text (map (\x -> if x == '\'' then 'm' else x) n)
+  ppr (Ref n) =  text "&" <> ppr n
   ppr (Deref n) =  text "*" <> text (map (\x -> if x == '\'' then 'm' else x) n)
   ppr (BinOp s e1 e2) = parens(ppr e1 <+> text s <+> ppr e2)
   ppr (UnOp s e) = text s <> parens (ppr e)
   ppr (Cond e1 e2 e3) = text "if" <+> parens(ppr e1) <> braces(ppr e2) <+> text "else" <> braces(ppr e3)
-  ppr (Cast src bt) = parens(ppr bt) <+> ppr src
+  ppr (Cast bt src) = parens(ppr bt) <+> ppr src
   ppr (Index src (IdxExp idx)) = ppr src <> brackets(ppr idx)
   ppr (Index src (IdxRange from to)) = text "MySlice" <> parens(commasep $ map ppr [src, from, to])
   ppr (Pair e1 e2) = braces(ppr e1 <> comma <> ppr e2)
