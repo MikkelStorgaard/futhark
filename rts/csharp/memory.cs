@@ -99,76 +99,76 @@ byte[] allocateMem(ulong size)
 FlatArray<byte> createArray_byte(byte[] bytes, long[] shape)
 {
     var byteArray = new byte[bytes.Length / sizeof(byte)];
-    Array.Copy(bytes, 0, byteArray, 0, bytes.Length);
+    Buffer.BlockCopy(bytes, 0, byteArray, 0, bytes.Length);
     return new FlatArray<byte>(byteArray, shape);
 }
 FlatArray<ushort> createArray_ushort(byte[] bytes, long[] shape)
 {
     var ushortArray = new ushort[bytes.Length / sizeof(ushort)];
-    Array.Copy(bytes, 0, ushortArray, 0, bytes.Length);
+    Buffer.BlockCopy(bytes, 0, ushortArray, 0, bytes.Length);
     return new FlatArray<ushort>(ushortArray, shape);
 }
 
 FlatArray<uint> createArray_uint(byte[] bytes, long[] shape)
 {
     var uintArray = new uint[bytes.Length / sizeof(uint)];
-    Array.Copy(bytes, 0, uintArray, 0, bytes.Length);
+    Buffer.BlockCopy(bytes, 0, uintArray, 0, bytes.Length);
     return new FlatArray<uint>(uintArray, shape);
 }
 
 FlatArray<ulong> createArray_ulong(byte[] bytes, long[] shape)
 {
     var ulongArray = new ulong[bytes.Length / sizeof(ulong)];
-    Array.Copy(bytes, 0, ulongArray, 0, bytes.Length);
+    Buffer.BlockCopy(bytes, 0, ulongArray, 0, bytes.Length);
     return new FlatArray<ulong>(ulongArray, shape);
 }
 
 FlatArray<sbyte> createArray_sbyte(byte[] bytes, long[] shape)
 {
     var sbyteArray = new sbyte[bytes.Length / sizeof(sbyte)];
-    Array.Copy(bytes, 0, sbyteArray, 0, bytes.Length);
+    Buffer.BlockCopy(bytes, 0, sbyteArray, 0, bytes.Length);
     return new FlatArray<sbyte>(sbyteArray, shape);
 }
 
 FlatArray<short> createArray_short(byte[] bytes, long[] shape)
 {
     var shortArray = new short[bytes.Length / sizeof(short)];
-    Array.Copy(bytes, 0, shortArray, 0, bytes.Length);
+    Buffer.BlockCopy(bytes, 0, shortArray, 0, bytes.Length);
     return new FlatArray<short>(shortArray, shape);
 }
 
 FlatArray<int> createArray_int(byte[] bytes, long[] shape)
 {
     var intArray = new int[bytes.Length / sizeof(int)];
-    Array.Copy(bytes, 0, intArray, 0, bytes.Length);
+    Buffer.BlockCopy(bytes, 0, intArray, 0, bytes.Length);
     return new FlatArray<int>(intArray, shape);
 }
 
 FlatArray<long> createArray_long(byte[] bytes, long[] shape)
 {
     var longArray = new long[bytes.Length / sizeof(long)];
-    Array.Copy(bytes, 0, longArray, 0, bytes.Length);
+    Buffer.BlockCopy(bytes, 0, longArray, 0, bytes.Length);
     return new FlatArray<long>(longArray, shape);
 }
 
 FlatArray<float> createArray_float(byte[] bytes, long[] shape)
 {
     var floatArray = new float[bytes.Length / sizeof(float)];
-    Array.Copy(bytes, 0, floatArray, 0, bytes.Length);
+    Buffer.BlockCopy(bytes, 0, floatArray, 0, bytes.Length);
     return new FlatArray<float>(floatArray, shape);
 }
 
 FlatArray<double> createArray_double(byte[] bytes, long[] shape)
 {
     var doubleArray = new double[bytes.Length / sizeof(double)];
-    Array.Copy(bytes, 0, doubleArray, 0, bytes.Length);
+    Buffer.BlockCopy(bytes, 0, doubleArray, 0, bytes.Length);
     return new FlatArray<double>(doubleArray, shape);
 }
 
 FlatArray<bool> createArray_bool(byte[] bytes, long[] shape)
 {
     var boolArray = new bool[bytes.Length / sizeof(bool)];
-    Array.Copy(bytes, 0, boolArray, 0, bytes.Length);
+    Buffer.BlockCopy(bytes, 0, boolArray, 0, bytes.Length);
     return new FlatArray<bool>(boolArray, shape);
 }
 
@@ -208,7 +208,7 @@ class opaque(object):
 byte[] unwrapArray(Array src, int obj_size)
 {
     var bytes = new byte[src.Length * obj_size];
-    Array.Copy(src, 0, bytes, 0, bytes.Length);
+    Buffer.BlockCopy(src, 0, bytes, 0, bytes.Length);
     return bytes;
 }
 
@@ -220,55 +220,55 @@ T indexArray<T>(byte[] src, int offset, Func<byte[],int, T> converter)
 void writeScalarArray(byte[] dest, int offset, sbyte value)
 {
     var asBytes = BitConverter.GetBytes(value);
-    Array.Copy(asBytes, 0, dest, offset, asBytes.Length);
+    Buffer.BlockCopy(asBytes, 0, dest, offset, asBytes.Length);
 }
 void writeScalarArray(byte[] dest, int offset, byte value)
 {
     var asBytes = BitConverter.GetBytes(value);
-    Array.Copy(asBytes, 0, dest, offset, asBytes.Length);
+    Buffer.BlockCopy(asBytes, 0, dest, offset, asBytes.Length);
 }
 void writeScalarArray(byte[] dest, int offset, short value)
 {
     var asBytes = BitConverter.GetBytes(value);
-    Array.Copy(asBytes, 0, dest, offset, asBytes.Length);
+    Buffer.BlockCopy(asBytes, 0, dest, offset, asBytes.Length);
 }
 void writeScalarArray(byte[] dest, int offset, ushort value)
 {
     var asBytes = BitConverter.GetBytes(value);
-    Array.Copy(asBytes, 0, dest, offset, asBytes.Length);
+    Buffer.BlockCopy(asBytes, 0, dest, offset, asBytes.Length);
 }
 void writeScalarArray(byte[] dest, int offset, int value)
 {
     var asBytes = BitConverter.GetBytes(value);
-    Array.Copy(asBytes, 0, dest, offset, asBytes.Length);
+    Buffer.BlockCopy(asBytes, 0, dest, offset, asBytes.Length);
 }
 void writeScalarArray(byte[] dest, int offset, uint value)
 {
     var asBytes = BitConverter.GetBytes(value);
-    Array.Copy(asBytes, 0, dest, offset, asBytes.Length);
+    Buffer.BlockCopy(asBytes, 0, dest, offset, asBytes.Length);
 }
 void writeScalarArray(byte[] dest, int offset, long value)
 {
     var asBytes = BitConverter.GetBytes(value);
-    Array.Copy(asBytes, 0, dest, offset, asBytes.Length);
+    Buffer.BlockCopy(asBytes, 0, dest, offset, asBytes.Length);
 }
 void writeScalarArray(byte[] dest, int offset, ulong value)
 {
     var asBytes = BitConverter.GetBytes(value);
-    Array.Copy(asBytes, 0, dest, offset, asBytes.Length);
+    Buffer.BlockCopy(asBytes, 0, dest, offset, asBytes.Length);
 }
 void writeScalarArray(byte[] dest, int offset, float value)
 {
     var asBytes = BitConverter.GetBytes(value);
-    Array.Copy(asBytes, 0, dest, offset, asBytes.Length);
+    Buffer.BlockCopy(asBytes, 0, dest, offset, asBytes.Length);
 }
 void writeScalarArray(byte[] dest, int offset, double value)
 {
     var asBytes = BitConverter.GetBytes(value);
-    Array.Copy(asBytes, 0, dest, offset, asBytes.Length);
+    Buffer.BlockCopy(asBytes, 0, dest, offset, asBytes.Length);
 }
 void writeScalarArray(byte[] dest, int offset, bool value)
 {
     var asBytes = BitConverter.GetBytes(value);
-    Array.Copy(asBytes, 0, dest, offset, asBytes.Length);
+    Buffer.BlockCopy(asBytes, 0, dest, offset, asBytes.Length);
 }

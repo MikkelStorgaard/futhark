@@ -747,7 +747,7 @@ prepareEntry (fname, Imp.Function _ outputs inputs _ results args) = do
 copyMemoryDefaultSpace :: VName -> CSExp -> VName -> CSExp -> CSExp ->
                           CompilerM op s ()
 copyMemoryDefaultSpace destmem destidx srcmem srcidx nbytes =
-  stm $ Exp $ simpleCall "Array.Copy" [ Var (compileName srcmem), srcidx
+  stm $ Exp $ simpleCall "Buffer.BlockCopy" [ Var (compileName srcmem), srcidx
                                       , Var (compileName destmem), destidx,
                                         nbytes]
 
@@ -1137,7 +1137,7 @@ compileCode (Imp.Copy dest (Imp.Count destoffset) DefaultSpace src (Imp.Count sr
   let dest' = Var (compileName dest)
   let src' = Var (compileName src)
   size' <- compileExp size
-  stm $ Exp $ simpleCall "Array.Copy" [src', srcoffset', dest', destoffset', size']
+  stm $ Exp $ simpleCall "Buffer.BlockCopy" [src', srcoffset', dest', destoffset', size']
 
 compileCode (Imp.Copy dest (Imp.Count destoffset) destspace src (Imp.Count srcoffset) srcspace (Imp.Count size)) = do
   copy <- asks envCopy
