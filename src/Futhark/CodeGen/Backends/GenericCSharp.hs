@@ -354,14 +354,15 @@ compileProg module_name constructor imports defines ops userstate pre_timing opt
                        Class name $
                          constructor' : defines ++ map FunDef (definitions ++ entry_point_defs) ++
                          member_decls ++
-                         [PublicFunDef $ Def "internal_entry" VoidT [] $
+                         [PublicFunDef $ Def "internal_entry" VoidT [("args", string_array)] $
                            parse_options ++ selectEntryPoint entry_point_names entry_points]) :
-                     [ClassDef $ Class "Program" [StaticFunDef $ Def "Main" VoidT [] main_entry]])
+                     [ClassDef $ Class "Program" [StaticFunDef $ Def "Main" VoidT [("args", string_array)] main_entry]])
 
 
+        string_array = Composite $ ArrayT $ Primitive StringT
         main_entry :: [CSStmt]
         main_entry = [ Assign (Var "internal_instance") (simpleInitClass "FutharkInternal" [])
-                     , Exp $ simpleCall "internal_instance.internal_entry" []
+                     , Exp $ simpleCall "internal_instance.internal_entry" [Var "args"]
                      ]
 
         member_decls =
@@ -978,7 +979,7 @@ compileExp (Imp.LeafExp (Imp.ScalarVar vname) _) =
   return $ Var $ compileName vname
 
 compileExp (Imp.LeafExp (Imp.SizeOf t) _) =
-  return $ simpleCall (compileTypeConverter $ IntType Int64) [Integer $ primByteSize t]
+  return $ simpleCall (compileTypeConverter $ IntType Int32) [Integer $ primByteSize t]
 
 compileExp (Imp.LeafExp (Imp.Index src (Imp.Count iexp) bt DefaultSpace _) _) = do
   iexp' <- compileExp iexp
@@ -1059,7 +1060,9 @@ compileCode (Imp.For i it bound body) = do
   one <- pretty <$> newVName "one"
   stm $ Assign (Var i') $ simpleCall (compileTypeConverter (IntType it)) [Integer 0]
   stm $ Assign (Var one) $ simpleCall (compileTypeConverter (IntType it)) [Integer 1]
-  stm $ For counter bound' body'
+  stm $ For counter bound' $ body' ++
+    [AssignOp "+" (Var i') (Var one)]
+
 
 compileCode (Imp.SetScalar vname exp1) = do
   let name' = Var $ compileName vname

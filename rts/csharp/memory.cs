@@ -99,76 +99,76 @@ byte[] allocateMem(ulong size)
 FlatArray<byte> createArray_byte(byte[] bytes, long[] shape)
 {
     var byteArray = new byte[bytes.Length / sizeof(byte)];
-    Buffer.BlockCopy(bytes, 0, byteArray, 0, bytes.Length);
+    Array.Copy(bytes, 0, byteArray, 0, bytes.Length);
     return new FlatArray<byte>(byteArray, shape);
 }
 FlatArray<ushort> createArray_ushort(byte[] bytes, long[] shape)
 {
     var ushortArray = new ushort[bytes.Length / sizeof(ushort)];
-    Buffer.BlockCopy(bytes, 0, ushortArray, 0, bytes.Length);
+    Array.Copy(bytes, 0, ushortArray, 0, bytes.Length);
     return new FlatArray<ushort>(ushortArray, shape);
 }
 
 FlatArray<uint> createArray_uint(byte[] bytes, long[] shape)
 {
     var uintArray = new uint[bytes.Length / sizeof(uint)];
-    Buffer.BlockCopy(bytes, 0, uintArray, 0, bytes.Length);
+    Array.Copy(bytes, 0, uintArray, 0, bytes.Length);
     return new FlatArray<uint>(uintArray, shape);
 }
 
 FlatArray<ulong> createArray_ulong(byte[] bytes, long[] shape)
 {
     var ulongArray = new ulong[bytes.Length / sizeof(ulong)];
-    Buffer.BlockCopy(bytes, 0, ulongArray, 0, bytes.Length);
+    Array.Copy(bytes, 0, ulongArray, 0, bytes.Length);
     return new FlatArray<ulong>(ulongArray, shape);
 }
 
 FlatArray<sbyte> createArray_sbyte(byte[] bytes, long[] shape)
 {
     var sbyteArray = new sbyte[bytes.Length / sizeof(sbyte)];
-    Buffer.BlockCopy(bytes, 0, sbyteArray, 0, bytes.Length);
+    Array.Copy(bytes, 0, sbyteArray, 0, bytes.Length);
     return new FlatArray<sbyte>(sbyteArray, shape);
 }
 
 FlatArray<short> createArray_short(byte[] bytes, long[] shape)
 {
     var shortArray = new short[bytes.Length / sizeof(short)];
-    Buffer.BlockCopy(bytes, 0, shortArray, 0, bytes.Length);
+    Array.Copy(bytes, 0, shortArray, 0, bytes.Length);
     return new FlatArray<short>(shortArray, shape);
 }
 
 FlatArray<int> createArray_int(byte[] bytes, long[] shape)
 {
     var intArray = new int[bytes.Length / sizeof(int)];
-    Buffer.BlockCopy(bytes, 0, intArray, 0, bytes.Length);
+    Array.Copy(bytes, 0, intArray, 0, bytes.Length);
     return new FlatArray<int>(intArray, shape);
 }
 
 FlatArray<long> createArray_long(byte[] bytes, long[] shape)
 {
     var longArray = new long[bytes.Length / sizeof(long)];
-    Buffer.BlockCopy(bytes, 0, longArray, 0, bytes.Length);
+    Array.Copy(bytes, 0, longArray, 0, bytes.Length);
     return new FlatArray<long>(longArray, shape);
 }
 
 FlatArray<float> createArray_float(byte[] bytes, long[] shape)
 {
     var floatArray = new float[bytes.Length / sizeof(float)];
-    Buffer.BlockCopy(bytes, 0, floatArray, 0, bytes.Length);
+    Array.Copy(bytes, 0, floatArray, 0, bytes.Length);
     return new FlatArray<float>(floatArray, shape);
 }
 
 FlatArray<double> createArray_double(byte[] bytes, long[] shape)
 {
     var doubleArray = new double[bytes.Length / sizeof(double)];
-    Buffer.BlockCopy(bytes, 0, doubleArray, 0, bytes.Length);
+    Array.Copy(bytes, 0, doubleArray, 0, bytes.Length);
     return new FlatArray<double>(doubleArray, shape);
 }
 
 FlatArray<bool> createArray_bool(byte[] bytes, long[] shape)
 {
     var boolArray = new bool[bytes.Length / sizeof(bool)];
-    Buffer.BlockCopy(bytes, 0, boolArray, 0, bytes.Length);
+    Array.Copy(bytes, 0, boolArray, 0, bytes.Length);
     return new FlatArray<bool>(boolArray, shape);
 }
 
@@ -208,7 +208,7 @@ class opaque(object):
 byte[] unwrapArray(Array src, int obj_size)
 {
     var bytes = new byte[src.Length * obj_size];
-    Buffer.BlockCopy(src, 0, bytes, 0, bytes.Length);
+    Array.Copy(src, 0, bytes, 0, bytes.Length);
     return bytes;
 }
 
