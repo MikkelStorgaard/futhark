@@ -1,7 +1,7 @@
 public class FlatArray<T>
 {
-    private long[] shape;
-    private T[] array;
+    public long[] shape;
+    public T[] array;
     public FlatArray(T[] data_array, long[] shape_array)
     {
         shape = shape_array;

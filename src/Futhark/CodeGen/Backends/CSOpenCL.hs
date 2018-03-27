@@ -291,24 +291,13 @@ packArrayOutput _ sid _ _ _ =
 
 unpackArrayInput :: Py.EntryInput Imp.OpenCL ()
 unpackArrayInput mem memsize "device" t s dims e = do
-  let type_is_ok =
-        BinOp "and"
-        (BinOp "in" (Py.simpleCall "type" [e]) (List [Var "np.ndarray", Var "cl.array.Array"]))
-        (BinOp "==" (Field e "dtype") (Var (Py.compilePrimToExtNp t s)))
-  Py.stm $ Assert type_is_ok "Parameter has unexpected type"
+  let size = foldr (BinOp "*") (Integer 1) dims
+  let t' = CS.compilePrimTypeExt t s
+  let nbytes = BinOp "*" (sizeOf t') size
 
-  zipWithM_ (Py.unpackDim e) dims [0..]
+  zipWithM_ (CS.unpackDim e) dims [0..]
 
-  case memsize of
-    Imp.VarSize sizevar ->
-      Py.stm $ Assign (Var $ Py.compileName sizevar) $
-      Py.simpleCall "np.int64" [Field e "nbytes"]
-    Imp.ConstSize _ ->
-      return ()
-
-  let memsize' = Py.compileDim memsize
-      pyOpenCLArrayCase =
-        [Assign mem_dest $ Field e "data"]
+  let memsize' = CS.compileDim memsize
   numpyArrayCase <- Py.collect $ do
     allocateOpenCLBuffer mem memsize' "device"
     Py.stm $ ifNotZeroSize memsize' $
@@ -318,9 +307,7 @@ unpackArrayInput mem memsize "device" t s dims e = do
        Arg $ Call (Var "normaliseArray") [Arg e],
        ArgKeyword "is_blocking" $ Var "synchronous"]
 
-  Py.stm $ If (BinOp "==" (Py.simpleCall "type" [e]) (Var "cl.array.Array"))
-    pyOpenCLArrayCase
-    numpyArrayCase
+  CS.stm numpyArrayCase
   where mem_dest = Var $ Py.compileName mem
 unpackArrayInput _ _ sid _ _ _ _ =
   fail $ "Cannot accept array from " ++ sid ++ " space."
