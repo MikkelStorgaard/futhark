@@ -109,6 +109,7 @@ data CSExp = Integer Integer
            | RawStringLiteral String
            | Var String
            | Ref CSExp
+           | Out CSExp
            | Deref String
            | BinOp String CSExp CSExp
            | UnOp String CSExp
@@ -119,6 +120,7 @@ data CSExp = Integer Integer
            | CallMethod CSExp CSExp [CSArg]
            | CreateObject CSExp [CSArg]
            | CreateArray CSType [CSExp]
+           | AllocArray CSType CSExp
            | Cast CSType CSExp
            | Tuple [CSExp]
            | Array [CSExp]
@@ -140,6 +142,7 @@ instance Pretty CSExp where
   ppr (RawStringLiteral s) = text "@\"" <> text s <> text "\""
   ppr (Var n) = text $ map (\x -> if x == '\'' then 'm' else x) n
   ppr (Ref n) =  text "&" <> ppr n
+  ppr (Out n) =  text "out" <+> ppr n
   ppr (Deref n) =  text "*" <> text (map (\x -> if x == '\'' then 'm' else x) n)
   ppr (BinOp s e1 e2) = parens(ppr e1 <+> text s <+> ppr e2)
   ppr (UnOp s e) = text s <> parens (ppr e)
@@ -151,19 +154,20 @@ instance Pretty CSExp where
   ppr (Call fun args) = ppr fun <> parens(commasep $ map ppr args)
   ppr (CallMethod obj method args) = ppr obj <> dot <> ppr method <> parens(commasep $ map ppr args)
   ppr (CreateObject className args) = text "new" <+> ppr className <> parens(commasep $ map ppr args)
-  ppr (CreateArray t dims) = text "new" <+> ppr t <> text "[]" <+> braces(commasep $ map ppr dims)
+  ppr (CreateArray t vs) = text "new" <+> ppr t <> text "[]" <+> braces(commasep $ map ppr vs)
   ppr (Tuple exps) = parens(commasep $ map ppr exps)
   ppr (Array exps) = braces(commasep $ map ppr exps) -- uhoh is this right?
   ppr (Field obj field) = ppr obj <> dot <> text field
   ppr (Lambda expr [Exp e]) = ppr expr <+> text "=>" <+> ppr e
   ppr (Lambda expr stmts) = ppr expr <+> text "=>" <+> braces(stack $ map ppr stmts)
-  ppr (Collection collection exps) = text "new "<> text collection <> braces(commasep $ map ppr exps)
+  ppr (Collection collection exps) = text "new" <+> text collection <> braces(commasep $ map ppr exps)
   ppr Null = text "null"
+  ppr (AllocArray t length) = text "new" <+> (ppr t) <> lbracket <> ppr length <> rbracket
   --ppr (Dict exps) = undefined
 
 
 data CSIdx = IdxRange CSExp CSExp
-               | IdxExp CSExp
+           | IdxExp CSExp
                deriving (Eq, Show)
 
 data CSArg = ArgKeyword String CSArg -- please don't assign multiple keywords with the same argument

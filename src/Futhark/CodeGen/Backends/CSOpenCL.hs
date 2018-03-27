@@ -164,7 +164,7 @@ writeOpenCLScalar mem i bt "device" val = do
 writeOpenCLScalar _ _ _ space _ =
   fail $ "Cannot write to '" ++ space ++ "' memory space."
 
-readOpenCLScalar :: Py.ReadScalar Imp.OpenCL ()
+readOpenCLScalar :: CS.ReadScalar Imp.OpenCL ()
 readOpenCLScalar mem i bt "device" = do
   val <- newVName "read_res"
   let bt' = CS.compilePrimTypeToAST bt
@@ -179,94 +179,113 @@ readOpenCLScalar mem i bt "device" = do
 readOpenCLScalar _ _ _ space =
   fail $ "Cannot read from '" ++ space ++ "' memory space."
 
-allocateOpenCLBuffer :: Py.Allocate Imp.OpenCL ()
-allocateOpenCLBuffer mem size "device" =
-  Py.stm $ Assign (Var $ Py.compileName mem) $
-  Py.simpleCall "opencl_alloc" [Var "self", size, String $ pretty mem]
+allocateOpenCLBuffer :: CS.Allocate Imp.OpenCL ()
+allocateOpenCLBuffer mem size "device" = do
+  CS.stm $ Assign (Var $ CS.compileName mem) $
+    simpleCall "CL10.CreateBuffer" [ Var "context", Var "ComputeMemoryFlags.ReadWrite"
+                                   , toIntPtr size, Var "IntPtr.Zero"
+                                   , Out $ Var "compute_err_code"  ]
 
 allocateOpenCLBuffer _ _ space =
   fail $ "Cannot allocate in '" ++ space ++ "' space"
 
-copyOpenCLMemory :: Py.Copy Imp.OpenCL ()
+copyOpenCLMemory :: CS.Copy Imp.OpenCL ()
 copyOpenCLMemory destmem destidx Imp.DefaultSpace srcmem srcidx (Imp.Space "device") nbytes bt = do
   let srcmem'  = Var $ Py.compileName srcmem
   let destmem' = Var $ Py.compileName destmem
-  let divide = BinOp "//" nbytes (Integer $ Imp.primByteSize bt)
-  let end = BinOp "+" destidx divide
-  let dest = Index destmem' (IdxRange destidx end)
-  Py.stm $ ifNotZeroSize nbytes $
-    Exp $ Call (Var "cl.enqueue_copy")
-    [Arg $ Var "self.queue", Arg dest, Arg srcmem',
-     ArgKeyword "device_offset" $ asLong srcidx,
-     ArgKeyword "is_blocking" $ Var "synchronous"]
+  ptr <- newVName "ptr"
+  CS.stm $ Fixed assignArrayPointer (Var destmem') (Var ptr) $
+  [ ifNotZeroSize nbytes $
+    Exp $ simpleCall "CL10.EnqueueReadBuffer"
+             [ Var "queue", Var srcmem', Var "synchronous"
+             , toIntPtr i, nbytes, toIntPtr $ Var ptr
+             , destidx, Null, Null]
+  ]
 
-copyOpenCLMemory destmem destidx (Imp.Space "device") srcmem srcidx Imp.DefaultSpace nbytes bt = do
+copyOpenCLMemory destmem destidx (Imp.Space "device") srcmem srcidx Imp.DefaultSpace nbytes _ = do
   let destmem' = Var $ Py.compileName destmem
   let srcmem'  = Var $ Py.compileName srcmem
-  let divide = BinOp "//" nbytes (Integer $ Imp.primByteSize bt)
-  let end = BinOp "+" srcidx divide
-  let src = Index srcmem' (IdxRange srcidx end)
-  Py.stm $ ifNotZeroSize nbytes $
-    Exp $ Call (Var "cl.enqueue_copy")
-    [Arg $ Var "self.queue", Arg destmem', Arg src,
-     ArgKeyword "device_offset" $ asLong destidx,
-     ArgKeyword "is_blocking" $ Var "synchronous"]
+  ptr <- newVName "ptr"
+  CS.stm $ Fixed assignArrayPointer (Var srcmem') (Var ptr) $
+  [ ifNotZeroSize nbytes $
+    Exp $ simpleCall "CL10.EnqueueWriteBuffer"
+             [ Var "queue", Var destmem', Var "synchronous"
+             , toIntPtr destidx, nbytes, toIntPtr $ Var ptr
+             , srcidx, Null, Null]
+  ]
 
 copyOpenCLMemory destmem destidx (Imp.Space "device") srcmem srcidx (Imp.Space "device") nbytes _ = do
   let destmem' = Var $ Py.compileName destmem
   let srcmem'  = Var $ Py.compileName srcmem
-  Py.stm $ ifNotZeroSize nbytes $
-    Exp $ Call (Var "cl.enqueue_copy")
-    [Arg $ Var "self.queue", Arg destmem', Arg srcmem',
-     ArgKeyword "dest_offset" $ asLong destidx,
-     ArgKeyword "src_offset" $ asLong srcidx,
-     ArgKeyword "byte_count" $ asLong nbytes]
+  CS.stm $ ifNotZeroSize nbytes $
+    Exp $ simpleCall "CL10.EnqueueCopyBuffer"
+      [ Var "queue", Arg srcmem', Arg destmem',
+      , srcidx, destidx, nbytes
+      , 0, Null, Null]
   finishIfSynchronous
 
 copyOpenCLMemory destmem destidx Imp.DefaultSpace srcmem srcidx Imp.DefaultSpace nbytes _ =
-  Py.copyMemoryDefaultSpace destmem destidx srcmem srcidx nbytes
+  CS.copyMemoryDefaultSpace destmem destidx srcmem srcidx nbytes
 
 copyOpenCLMemory _ _ destspace _ _ srcspace _ _=
   error $ "Cannot copy to " ++ show destspace ++ " from " ++ show srcspace
 
-staticOpenCLArray :: Py.StaticArray Imp.OpenCL ()
+staticOpenCLArray :: CL.StaticArray Imp.OpenCL ()
 staticOpenCLArray name "device" t vs = do
   mapM_ Py.atInit <=< Py.collect $ do
-    -- Create host-side Numpy array with intended values.
-    Py.stm $ Assign (Var name') $
-      Call (Var "np.array")
-      [Arg $ List $ map Py.compilePrimValue vs,
-       ArgKeyword "dtype" $ Var $ Py.compilePrimToNp t]
+    -- Create host-side C# array with intended values.
+    tmp_arr <- newVName "tmp_arr"
+    Py.stm $ Assign (Var tmp_arr) $
+      CreateArray (CS.compilePrimTypeToAST t) [map CS.compilePrimValue vs]
 
     -- Create memory block on the device.
     static_mem <- newVName "static_mem"
+    ptr <- newVName "ptr"
     let size = Integer $ genericLength vs * Imp.primByteSize t
     allocateOpenCLBuffer static_mem size "device"
 
     -- Copy Numpy array to the device memory block.
-    Py.stm $ ifNotZeroSize size $
-      Exp $ Call (Var "cl.enqueue_copy")
-      [Arg $ Var "self.queue",
-       Arg $ Var $ Py.compileName static_mem,
-       Arg $ Call (Var "normaliseArray") [Arg (Var name')],
-       ArgKeyword "is_blocking" $ Var "synchronous"]
+    CS.stm $ Fixed (assignArrayPointer tmp_arr ptr) $
+      [ ifNotZeroSize size $
+          Exp $ simpleCall "CL10.EnqueueWriteBuffer" $
+          [ Var "queue", Var $ CS.compileName static_mem, Var "synchronous"
+          , toIntPtr (Integer 0), toIntPtr size
+          , Var ptr, Integer 0, Null, Null ]
 
+                                                  ]
     -- Store the memory block for later reference.
-    Py.stm $ Assign (Field (Var "self") name') $
-      Var $ Py.compileName static_mem
+    CS.stm $ Assign name' $ Var $ CS.compileName static_mem
 
-  Py.stm $ Assign (Var name') (Field (Var "self") name')
-  where name' = Py.compileName name
+  CS.stm $ Reassign (Var name') (Var name')
+  where name' = CS.compileName name
 staticOpenCLArray _ space _ _ =
   fail $ "PyOpenCL backend cannot create static array in memory space '" ++ space ++ "'"
 
+assignArrayPointer :: CSExp -> CSExp -> CSStmt
+assignArrayPointer e ptr =
+  AssignTyped (PointerT VoidT) (Var ptr) (Just $ Ref $ Index e (IdxExp $ Integer 0))
+
+assignScalarPointer :: CSExp -> CSExp -> CSStmt
+assignScalarPointer e ptr =
+  AssignTyped (PointerT VoidT) (Var ptr) (Just $ Ref e)
+
 packArrayOutput :: Py.EntryOutput Imp.OpenCL ()
 packArrayOutput mem "device" bt ept dims =
-  return $ Call (Var "cl.array.Array")
-  [Arg $ Var "self.queue",
-   Arg $ Tuple $ map Py.compileDim dims,
-   Arg $ Var $ Py.compilePrimTypeExt bt ept,
-   ArgKeyword "data" $ Var $ Py.compileName mem]
+  tmp_arr <- newVName "tmp_arr"
+  ptr <- newVName "ptr"
+  let size = foldr (BinOp "*") (Integer 1) dims
+  let bt' = CS.compilePrimTypeExt bt ept
+  let nbytes = BinOp "*" (sizeOf bt') size
+
+  CS.stm $ Assign (Var tmp_arr) $ AllocArray bt' size
+  CS.stm $ Fixed (assignArrayPointer (Var tmp_arr) (Var ptr)) $
+  [ Exp $ simpleCall "CL10.EnqueueReadBuffer"
+    [ Var "queue", Var mem, Var "synchronous"
+    , toIntPtr $ Integer 0, toIntPtr nbytes, toIntPtr $ Var ptr
+    , toIntPtr $ Integer 0, Null, Null]
+  ]
+  return $ CS.parametrizedCall "new FlatArray" bt' [Var tmp_arr, dims]
+
 packArrayOutput _ sid _ _ _ =
   fail $ "Cannot return array from " ++ sid ++ " space."
 
@@ -312,4 +331,4 @@ ifNotZeroSize e s =
 
 finishIfSynchronous :: Py.CompilerM op s ()
 finishIfSynchronous =
-  Py.stm $ If (Var "synchronous") [Exp $ Py.simpleCall "self.queue.finish" []] []
+  CS.stm $ If (Var "synchronous") [Exp $ CS.simpleCall "CL10.Finish" [Var "queue"]] []
