@@ -182,7 +182,7 @@ data CSStmt = If CSExp [CSStmt] [CSStmt]
             | ForEach String CSExp [CSStmt]
             | UsingWith CSStmt [CSStmt]
             | Unsafe [CSStmt]
-
+            | Fixed CSStmt [CSStmt]
             | Assign CSExp CSExp
             | Reassign CSExp CSExp
             | AssignOp String CSExp CSExp
@@ -254,6 +254,12 @@ instance Pretty CSStmt where
 
   ppr (Unsafe stmts) =
     text "unsafe" </>
+    lbrace </>
+    indent 4 (stack $ map ppr stmts) </>
+    rbrace
+
+  ppr (Fixed assignment stmts) =
+    text "fixed" <+> parens(ppr assignment) </>
     lbrace </>
     indent 4 (stack $ map ppr stmts) </>
     rbrace

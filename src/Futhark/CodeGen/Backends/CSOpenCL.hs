@@ -125,39 +125,41 @@ launchKernel kernel_name kernel_dims workgroup_dims args = do
           tmp <- newVName "kernel_arg"
           e' <- Py.compileExp e
           return [ AssignTyped t (Var tmp) (Just e')
-                 , Exp $ getKernelCall kernel argnum t (Var tmp)]
+                 , Exp $ getKernelCall kernel argnum (sizeOf t) (Var tmp)]
 
         processKernelArg kernel argnum (Imp.MemKArg v) =
-          return [ Exp $ getKernelCall kernel argnum IntPtrT (Var v) ]
+          return [ Exp $ getKernelCall kernel argnum (sizeOf IntPtrT) (Var v) ]
 
-        processKernelArg (Imp.SharedMemoryKArg (Imp.Count num_bytes)) =
-          undefined
-          {-
-          num_bytes' <- Py.compileExp num_bytes
-          return $ Py.simpleCall "cl.LocalMemory" [asLong num_bytes']
-k-}
+        processKernelArg (Imp.SharedMemoryKArg (Imp.Count num_bytes)) = do
+          num_bytes' <- CS.compileExp num_bytes
+          return [ Exp $ getKernelCall kernel argnum num_bytes' Null ]
 
-getKernelCall :: String -> Integer -> CSType -> CSExp -> CSExp
-getKernelCall kernel arg_num t e =
-  simpleCall "CL10.SetKernelArg" [ Var kernel, Integer arg_num
-                                 , Cast IntPtrT $ sizeOf t, Ref e]
+getKernelCall :: String -> Integer -> CSExp -> CSExp -> CSExp
+getKernelCall kernel arg_num size e =
+  simpleCall "CL10.SetKernelArg" [ Var kernel, Integer arg_num, size, Ref e]
 
 sizeOf :: CSType -> CSExp
 sizeOf t = simpleCall "sizeOf" [Var $ ppr t]
 
 
-asIntPtr :: CSExp -> CSExp
-asIntPtr e = Cast e "IntPtr"
+castToIntPtr :: CSExp -> CSExp
+castToIntPtr e = Cast e "IntPtr"
 
-writeOpenCLScalar :: Py.WriteScalar Imp.OpenCL ()
+toIntPtr :: CSExp -> CSExp
+toIntPtr e = CS.simpleInitClass "IntPtr" [e]
+
+writeOpenCLScalar :: CS.WriteScalar Imp.OpenCL ()
 writeOpenCLScalar mem i bt "device" val = do
-  let mem' = Var $ Py.compileName mem
-  let nparr = Call (Var "np.array")
-              [Arg val, ArgKeyword "dtype" $ Var $ Py.compilePrimType bt]
-  Py.stm $ Exp $ Call (Var "cl.enqueue_copy")
-    [Arg $ Var "self.queue", Arg mem', Arg nparr,
-     ArgKeyword "device_offset" $ asLong i,
-     ArgKeyword "is_blocking" $ Var "synchronous"]
+  let mem' = Var $ CS.compileName mem
+  let bt' = CS.compilePrimTypeToAST bt
+  scalar <- newVName "scalar"
+  ptr <- newVName "ptr"
+  CS.stm $ AssignTyped bt' (Var scalar) (Just val)
+  CS.stm $ AssignTyped (PointerT VoidT) (Var ptr) (Just $ Ref scalar)
+  simpleCall "CL10.EnqueueWriteBuffer"
+    [ Var "queue", Var mem', Var "synchronous"
+    , toIntPtr i, toIntPtr $ sizeOf bt', toIntPtr $ Var ptr
+    , Integer 0, Null, Null]
 
 writeOpenCLScalar _ _ _ space _ =
   fail $ "Cannot write to '" ++ space ++ "' memory space."
@@ -165,17 +167,14 @@ writeOpenCLScalar _ _ _ space _ =
 readOpenCLScalar :: Py.ReadScalar Imp.OpenCL ()
 readOpenCLScalar mem i bt "device" = do
   val <- newVName "read_res"
-  let val' = Var $ pretty val
-  let mem' = Var $ Py.compileName mem
-  let nparr = Call (Var "np.empty")
-              [Arg $ Integer 1,
-               ArgKeyword "dtype" (Var $ Py.compilePrimType bt)]
-  Py.stm $ Assign val' nparr
-  Py.stm $ Exp $ Call (Var "cl.enqueue_copy")
-    [Arg $ Var "self.queue", Arg val', Arg mem',
-     ArgKeyword "device_offset" $ asLong i,
-     ArgKeyword "is_blocking" $ Bool True]
-  return $ Index val' $ IdxExp $ Integer 0
+  let bt' = CS.compilePrimTypeToAST bt
+  let mem' = Var $ CS.compileName mem
+  CS.stm $ AssignTyped bt' (Var val) (Just simpleInitClass (ppr bt') [])
+  CS.stm $ simpleCall "CL10.EnqueueReadBuffer"
+             [ Var "queue", Var mem' , Bool True
+             , toIntPtr i, sizeOf bt', toIntPtr $ Ref $ Var val
+             , Integer 0, Null, Null]
+  return $ Var val
 
 readOpenCLScalar _ _ _ space =
   fail $ "Cannot read from '" ++ space ++ "' memory space."
