@@ -1,5 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
-module Futhark.CodeGen.Backends.PyOpenCL
+module Futhark.CodeGen.Backends.CSOpenCL
   ( compileProg
   ) where
 
@@ -24,12 +24,12 @@ compileProg :: MonadFreshNames m =>
                Maybe String -> Prog ExplicitMemory ->  m (Either InternalError String)
 compileProg module_name prog = do
   res <- ImpGen.compileProg prog
-  --could probably be a better why do to this..
+  --could probably be a better way do to this..
   case res of
     Left err -> return $ Left err
     Right (Imp.Program opencl_code opencl_prelude kernel_names types sizes prog')  -> do
       --prepare the strings for assigning the kernels and set them as global
-      let assign = unlines $ map (\x -> pretty $ Assign (Var ("self."++x++"_var")) (Var $ "program."++x)) Dt er kernel_names
+      let assign = unlines $ map (\x -> pretty $ Assign (Var ("self."++x++"_var")) (Var $ "program."++x)) kernel_names
 
       let defines =
             [Assign (Var "synchronous") $ Bool False,
@@ -87,7 +87,7 @@ compileProg module_name prog = do
 asLong :: CSExp -> CSExp
 asLong x = CS.simpleCall "Convert.ToInt64" [x]
 
-callKernel :: Py.OpCompiler Imp.OpenCL ()
+callKernel :: CS.OpCompiler Imp.OpenCL ()
 callKernel (Imp.GetSize v key) =
   CS.stm $ Assign (Var (CS.compileName v)) $
   Index (Var "sizes") (IdxExp $ String $ pretty key)
@@ -194,32 +194,32 @@ copyOpenCLMemory destmem destidx Imp.DefaultSpace srcmem srcidx (Imp.Space "devi
   let srcmem'  = Var $ Py.compileName srcmem
   let destmem' = Var $ Py.compileName destmem
   ptr <- newVName "ptr"
-  CS.stm $ Fixed assignArrayPointer (Var destmem') (Var ptr) $
-  [ ifNotZeroSize nbytes $
-    Exp $ simpleCall "CL10.EnqueueReadBuffer"
-             [ Var "queue", Var srcmem', Var "synchronous"
-             , toIntPtr i, nbytes, toIntPtr $ Var ptr
-             , destidx, Null, Null]
-  ]
+  CS.stm $ Fixed (assignArrayPointer (Var destmem') (Var ptr)) $
+    [ ifNotZeroSize nbytes $
+      Exp $ simpleCall "CL10.EnqueueReadBuffer"
+      [ Var "queue", Var srcmem', Var "synchronous"
+      , toIntPtr i, nbytes, toIntPtr $ Var ptr
+      , destidx, Null, Null]
+    ]
 
 copyOpenCLMemory destmem destidx (Imp.Space "device") srcmem srcidx Imp.DefaultSpace nbytes _ = do
   let destmem' = Var $ Py.compileName destmem
   let srcmem'  = Var $ Py.compileName srcmem
   ptr <- newVName "ptr"
   CS.stm $ Fixed assignArrayPointer (Var srcmem') (Var ptr) $
-  [ ifNotZeroSize nbytes $
-    Exp $ simpleCall "CL10.EnqueueWriteBuffer"
-             [ Var "queue", Var destmem', Var "synchronous"
-             , toIntPtr destidx, nbytes, toIntPtr $ Var ptr
-             , srcidx, Null, Null]
-  ]
+    [ ifNotZeroSize nbytes $
+      Exp $ simpleCall "CL10.EnqueueWriteBuffer"
+        [ Var "queue", Var destmem', Var "synchronous"
+        , toIntPtr destidx, nbytes, toIntPtr $ Var ptr
+        , srcidx, Null, Null]
+    ]
 
 copyOpenCLMemory destmem destidx (Imp.Space "device") srcmem srcidx (Imp.Space "device") nbytes _ = do
   let destmem' = Var $ Py.compileName destmem
   let srcmem'  = Var $ Py.compileName srcmem
   CS.stm $ ifNotZeroSize nbytes $
     Exp $ simpleCall "CL10.EnqueueCopyBuffer"
-      [ Var "queue", Arg srcmem', Arg destmem',
+      [ Var "queue", Arg srcmem', Arg destmem'
       , srcidx, destidx, nbytes
       , 0, Null, Null]
   finishIfSynchronous
@@ -270,7 +270,7 @@ assignScalarPointer e ptr =
   AssignTyped (PointerT VoidT) (Var ptr) (Just $ Ref e)
 
 packArrayOutput :: Py.EntryOutput Imp.OpenCL ()
-packArrayOutput mem "device" bt ept dims =
+packArrayOutput mem "device" bt ept dims = do
   tmp_arr <- newVName "tmp_arr"
   ptr <- newVName "ptr"
   let size = foldr (BinOp "*") (Integer 1) dims
@@ -279,11 +279,11 @@ packArrayOutput mem "device" bt ept dims =
 
   CS.stm $ Assign (Var tmp_arr) $ AllocArray bt' size
   CS.stm $ Fixed (assignArrayPointer (Var tmp_arr) (Var ptr)) $
-  [ Exp $ simpleCall "CL10.EnqueueReadBuffer"
-    [ Var "queue", Var mem, Var "synchronous"
-    , toIntPtr $ Integer 0, toIntPtr nbytes, toIntPtr $ Var ptr
-    , toIntPtr $ Integer 0, Null, Null]
-  ]
+    [ Exp $ simpleCall "CL10.EnqueueReadBuffer"
+      [ Var "queue", Var mem, Var "synchronous"
+      , toIntPtr $ Integer 0, toIntPtr nbytes, toIntPtr $ Var ptr
+      , toIntPtr $ Integer 0, Null, Null]
+    ]
   return $ CS.parametrizedCall "new FlatArray" bt' [Var tmp_arr, dims]
 
 packArrayOutput _ sid _ _ _ =
@@ -294,18 +294,19 @@ unpackArrayInput mem memsize "device" t s dims e = do
   let size = foldr (BinOp "*") (Integer 1) dims
   let t' = CS.compilePrimTypeExt t s
   let nbytes = BinOp "*" (sizeOf t') size
-
   zipWithM_ (CS.unpackDim e) dims [0..]
+  ptr <- newVName "ptr"
 
   let memsize' = CS.compileDim memsize
-  numpyArrayCase <- Py.collect $ do
+  numpyArrayCase <- CS.collect $ do
     allocateOpenCLBuffer mem memsize' "device"
-    Py.stm $ ifNotZeroSize memsize' $
-      Exp $ Call (Var "cl.enqueue_copy")
-      [Arg $ Var "self.queue",
-       Arg $ Var $ Py.compileName mem,
-       Arg $ Call (Var "normaliseArray") [Arg e],
-       ArgKeyword "is_blocking" $ Var "synchronous"]
+    CS.stm $ Fixed assignArrayPointer (Ref $ Index (Field (Var e) "array") (IdxExp $ Integer 0)) (Var ptr) $
+      [ CS.stm $ ifNotZeroSize memsize' $
+        CS.simpleCall "CL10.EnqueueWriteBuffer"
+        [ Var "queue", Var $ CS.compileName mem, Var "synchronous"
+        , toIntPtr (Integer 0), memsize', toIntPtr (Var ptr)
+        , toIntPtr (Integer 0), Null, Null]
+      ]
 
   CS.stm numpyArrayCase
   where mem_dest = Var $ Py.compileName mem

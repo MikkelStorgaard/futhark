@@ -97,6 +97,9 @@ executables:
   futhark-cs:
     <<: *futhark
     main: src/futhark-cs.hs
+  futhark-cs:
+    <<: *futhark
+    main: src/futhark-csopencl.hs
   futhark-test:
     <<: *futhark
     main: src/futhark-test.hs

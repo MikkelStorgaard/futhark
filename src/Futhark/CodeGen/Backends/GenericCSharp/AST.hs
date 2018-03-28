@@ -34,7 +34,6 @@ data ArgMemType = ArgOut
 instance Pretty ArgMemType where
   ppr ArgOut = text "out"
   ppr ArgRef = text "ref"
-  ppr Reference = text "&"
 
 instance Pretty CSComp where
   ppr (ArrayT t) = ppr t <> text "[]"
