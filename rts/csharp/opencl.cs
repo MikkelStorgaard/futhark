@@ -241,7 +241,7 @@ static void opencl_all_device_options(out opencl_device_option[] devices_out,
       continue;
     }
 
-    string platform_name = opencl_platform_info(platform, CL_PLATFORM_NAME);
+    string platform_name = opencl_platform_info(platform, ComputePlatformInfo.Name);
     CLDeviceHandle[] platform_devices = new CLDeviceHandle[num_platform_devices];
 
     // Fetch all the devices.
@@ -250,110 +250,104 @@ static void opencl_all_device_options(out opencl_device_option[] devices_out,
 
     // Loop through the devices, adding them to the devices array.
     for (int i = 0; i < num_platform_devices; i++) {
-      string device_name = opencl_device_info(platform_devices[i], CL_DEVICE_NAME);
+      string device_name = opencl_device_info(platform_devices[i], ComputeDeviceInfo.Name);
       devices[num_devices_added].platform = platform;
       devices[num_devices_added].device = platform_devices[i];
-      OPENCL_SUCCEED(clGetDeviceInfo(platform_devices[i], CL_DEVICE_TYPE,
-                                     sizeof(cl_device_type),
-                                     &devices[num_devices_added].device_type,
-                                     NULL));
+      OPENCL_SUCCEED(GetDeviceInfo(platform_devices[i], ComputeDeviceInfo.Type,
+                                   sizeof(cl_device_type),
+                                   &devices[num_devices_added].device_type,
+                                   NULL));
       // We don't want the structs to share memory, so copy the platform name.
       // Each device name is already unique.
       devices[num_devices_added].platform_name = strclone(platform_name);
       devices[num_devices_added].device_name = device_name;
       num_devices_added++;
     }
-    free(platform_devices);
-    free(platform_name);
   }
-  free(all_platforms);
-  free(platform_num_devices);
 
-  *devices_out = devices;
-  *num_devices_out = num_devices;
+  devices_out = devices;
+  num_devices_out = num_devices;
 }
 
-static int is_blacklisted(const char *platform_name, const char *device_name,
-                          const struct opencl_config *cfg) {
-  if (strcmp(cfg->preferred_platform, "") != 0 ||
-      strcmp(cfg->preferred_device, "") != 0) {
-    return 0;
-  } else if (strstr(platform_name, "Apple") != NULL &&
-             strstr(device_name, "Intel(R) Core(TM)") != NULL) {
-    return 1;
-  } else {
-    return 0;
-  }
+bool is_blacklisted(string platform_name, string device_name,
+                    opencl_config cfg)
+{
+    return (platform_name.Contains("Apple") &&
+            device_name.Contains("Intel(R) Core(TM)"));
 }
 
-static struct opencl_device_option get_preferred_device(const struct opencl_config *cfg) {
-  struct opencl_device_option *devices;
-  size_t num_devices;
+opencl_device_option get_preferred_device(opencl_config cfg) {
+  opencl_device_option[] devices;
+  int num_devices;
 
-  opencl_all_device_options(&devices, &num_devices);
+  opencl_all_device_options(out devices, out num_devices);
 
   int num_device_matches = 0;
 
-  for (size_t i = 0; i < num_devices; i++) {
-    struct opencl_device_option device = devices[i];
+  for (int i = 0; i < num_devices; i++)
+  {
+    opencl_device_option device = devices[i];
     if (!is_blacklisted(device.platform_name, device.device_name, cfg) &&
-        strstr(device.platform_name, cfg->preferred_platform) != NULL &&
-        strstr(device.device_name, cfg->preferred_device) != NULL &&
-        num_device_matches++ == cfg->preferred_device_num) {
-      // Free all the platform and device names, except the ones we have chosen.
-      for (size_t j = 0; j < num_devices; j++) {
-        if (j != i) {
-          free(devices[j].platform_name);
-          free(devices[j].device_name);
-        }
-      }
-      free(devices);
+        device.platform_name.Contains(cfg.preferred_platform) &&
+        device.device_name.Contains(cfg.preferred_device) &&
+        num_device_matches++ == cfg.preferred_device_num)
+    {
       return device;
     }
   }
 
   panic(1, "Could not find acceptable OpenCL device.\n");
-  exit(1); // Never reached
+
 }
 
-static void describe_device_option(struct opencl_device_option device) {
-  fprintf(stderr, "Using platform: %s\n", device.platform_name);
-  fprintf(stderr, "Using device: %s\n", device.device_name);
+void describe_device_option(struct opencl_device_option device) {
+  Console.Error.WriteLine("Using platform: {0}", device.platform_name);
+  Console.Error.WriteLine("Using device: {0}", device.device_name);
 }
 
-static cl_build_status build_opencl_program(cl_program program, cl_device_id device, const char* options) {
-  cl_int ret_val = clBuildProgram(program, 1, &device, options, NULL, NULL);
+cl_build_status build_opencl_program(out CLProgramHandle program, CLDeviceHandle device, string options) {
+    int ret_val = CL10.BuildProgram(program, 1, new []{device}, options, null, null);
 
   // Avoid termination due to CL_BUILD_PROGRAM_FAILURE
-  if (ret_val != CL_SUCCESS && ret_val != CL_BUILD_PROGRAM_FAILURE) {
+  if (ret_val != Success && ret_val != BuildProgramFailure) {
     assert(ret_val == 0);
   }
 
-  cl_build_status build_status;
-  ret_val = clGetProgramBuildInfo(program,
-                                  device,
-                                  CL_PROGRAM_BUILD_STATUS,
-                                  sizeof(cl_build_status),
-                                  &build_status,
-                                  NULL);
+  int build_status;
+  ret_val = CL10.GetProgramBuildInfo(program,
+                                     device,
+                                     ComputeProgramBuildInfo.Status,
+                                     sizeof(int),
+                                     &build_status,
+                                     null);
   assert(ret_val == 0);
 
-  if (build_status != CL_SUCCESS) {
-    char *build_log;
-    size_t ret_val_size;
-    ret_val = clGetProgramBuildInfo(program, device, CL_PROGRAM_BUILD_LOG, 0, NULL, &ret_val_size);
+  if (build_status != Success) {
+    char[] build_log;
+    int ret_val_size;
+    ret_val = CL10.GetProgramBuildInfo(program,
+                                       device,
+                                       ComputeProgramBuildInfo.BuildLog,
+                                       0,
+                                       null,
+                                       &ret_val_size);
     assert(ret_val == 0);
 
-    build_log = malloc(ret_val_size+1);
-    clGetProgramBuildInfo(program, device, CL_PROGRAM_BUILD_LOG, ret_val_size, build_log, NULL);
+    build_log = new byte[ret_val_size+1];
+    fixed (char* ptr = &build_log[0])
+    {
+        clGetProgramBuildInfo(program,
+                              device,
+                              ComputeProgramBuildInfo.BuildLog,
+                              ret_val_size,
+                              new IntPtr(ptr),
+                              null);
+    }
     assert(ret_val == 0);
 
     // The spec technically does not say whether the build log is zero-terminated, so let's be careful.
     build_log[ret_val_size] = '\0';
-
-    fprintf(stderr, "Build log:\n%s\n", build_log);
-
-    free(build_log);
+    Console.Error.Write("Build log:\n{0}\n", new string(build_log));
   }
 
   return build_status;
@@ -367,176 +361,153 @@ enum opencl_required_type { OPENCL_F64 = 1 };
 // C does not guarantee that the compiler supports particularly large
 // literals.  Notably, Visual C has a limit of 2048 characters.  The
 // array must be NULL-terminated.
-static cl_program setup_opencl(struct opencl_context *ctx,
-                               const char *srcs[],
-                               int required_types) {
+CLProgramHandle setup_opencl(out opencl_context ctx,
+                             string[] srcs,
+                             int required_types) {
 
-  cl_int error;
-  cl_platform_id platform;
-  cl_device_id device;
-  size_t max_group_size;
+  int error;
+  CLPlatformHandle platform;
+  CLDeviceHandle device;
+  int max_group_size;
 
-  ctx->lockstep_width = 0;
+  ctx.lockstep_width = 0;
 
-  free_list_init(&ctx->free_list);
+  opencl_device_option device_option = get_preferred_device(out ctx.cfg);
 
-  struct opencl_device_option device_option = get_preferred_device(&ctx->cfg);
-
-  if (ctx->cfg.debugging) {
+  if (ctx.cfg.debugging) {
     describe_device_option(device_option);
   }
 
-  ctx->device = device = device_option.device;
-  ctx->platform = platform = device_option.platform;
+  ctx.device = device = device_option.device;
+  ctx.platform = platform = device_option.platform;
 
   if (required_types & OPENCL_F64) {
-    cl_uint supported;
-    OPENCL_SUCCEED(clGetDeviceInfo(device, CL_DEVICE_PREFERRED_VECTOR_WIDTH_DOUBLE,
-                                   sizeof(cl_uint), &supported, NULL));
-    if (!supported) {
+    uint supported;
+    OPENCL_SUCCEED(CL10.GetDeviceInfo(device,
+                                      ComputeDeviceInfo.PreferredVectorWidthDouble,
+                                      sizeof(uint),
+                                      &supported,
+                                      NULL));
+    if (supported == 0) {
       panic(1,
             "Program uses double-precision floats, but this is not supported on chosen device: %s\n",
             device_option.device_name);
     }
   }
 
-  OPENCL_SUCCEED(clGetDeviceInfo(device, CL_DEVICE_MAX_WORK_GROUP_SIZE,
-                                 sizeof(size_t), &max_group_size, NULL));
+  OPENCL_SUCCEED(GetDeviceInfo(device,
+                               ComputeDeviceInfo.MaxWorkGroupSize,
+                               sizeof(int),
+                               &max_group_size,
+                               null));
 
-  size_t max_tile_size = sqrt(max_group_size);
+  int max_tile_size = Math.Sqrt(max_group_size);
 
-  if (max_group_size < ctx->cfg.default_group_size) {
-    fprintf(stderr, "Note: Device limits default group size to %zu (down from %zu).\n",
-            max_group_size, ctx->cfg.default_group_size);
+  if (max_group_size < ctx.cfg.default_group_size) {
+      Console.Error.WriteLine("Note: Device limits default group size to {0} (down from {1}).\n",
+                              max_group_size, ctx->cfg.default_group_size);
     ctx->cfg.default_group_size = max_group_size;
   }
 
-  if (max_tile_size < ctx->cfg.default_tile_size) {
-    fprintf(stderr, "Note: Device limits default tile size to %zu (down from %zu).\n",
-            max_tile_size, ctx->cfg.default_tile_size);
-    ctx->cfg.default_tile_size = max_tile_size;
+  if (max_tile_size < ctx.cfg.default_tile_size) {
+      Console.Error.WriteLine("Note: Device limits default tile size to {0} (down from {1}).\n",
+                              max_tile_size, ctx.cfg.default_tile_size);
+    ctx.cfg.default_tile_size = max_tile_size;
   }
 
-  ctx->max_group_size = max_group_size;
-  ctx->max_tile_size = max_tile_size; // No limit.
-  ctx->max_threshold = ctx->max_num_groups = 0; // No limit.
+  ctx.max_group_size = max_group_size;
+  ctx.max_tile_size = max_tile_size; // No limit.
+  ctx.max_threshold = ctx->max_num_groups = 0; // No limit.
 
   // Now we go through all the sizes, clamp them to the valid range,
   // or set them to the default.
-  for (int i = 0; i < ctx->cfg.num_sizes; i++) {
-    const char *size_class = ctx->cfg.size_classes[i];
-    size_t *size_value = &ctx->cfg.size_values[i];
-    const char* size_name = ctx->cfg.size_names[i];
-    size_t max_value, default_value;
-    if (strcmp(size_class, "group_size") == 0) {
+  for (int i = 0; i < ctx.cfg.num_sizes; i++) {
+    string size_class = ctx.cfg.size_classes[i];
+    int size_value = &ctx.cfg.size_values[i];
+    string size_name = ctx.cfg.size_names[i];
+    int max_value, default_value;
+    if (size_class == "group_size") {
       max_value = max_group_size;
-      default_value = ctx->cfg.default_group_size;
-    } else if (strcmp(size_class, "num_groups") == 0) {
+      default_value = ctx.cfg.default_group_size;
+    } else if (size_class == "num_groups") {
       max_value = max_group_size; // Futhark assumes this constraint.
-      default_value = ctx->cfg.default_num_groups;
-    } else if (strcmp(size_class, "tile_size") == 0) {
-      max_value = sqrt(max_group_size);
-      default_value = ctx->cfg.default_tile_size;
-    } else if (strcmp(size_class, "threshold") == 0) {
+      default_value = ctx.cfg.default_num_groups;
+    } else if (size_class == "tile_size"){
+      max_value = Math.Sqrt(max_group_size);
+      default_value = ctx.cfg.default_tile_size;
+    } else if (size_class == "threshold") {
       max_value = 0; // No limit.
-      default_value = ctx->cfg.default_threshold;
+      default_value = ctx.cfg.default_threshold;
     } else {
-      panic(1, "Unknown size class for size '%s': %s\n", size_name, size_class);
+      panic(1, "Unknown size class for size '{0}': {1}\n", size_name, size_class);
     }
-    if (*size_value == 0) {
-      *size_value = default_value;
-    } else if (max_value > 0 && *size_value > max_value) {
-      fprintf(stderr, "Note: Device limits %s to %d (down from %d)\n",
-              size_name, (int)max_value, (int)*size_value);
-      *size_value = max_value;
+    if (size_value == 0) {
+      ctx.cfg.size_values[i] = default_value;
+    } else if (max_value > 0 && size_value > max_value) {
+        Console.Error.WriteLine("Note: Device limits {0} to {1} (down from {2})",
+                                size_name, max_value, size_value);
+      ctx.cfg.size_values[i] = default_value;
     }
   }
 
-  cl_context_properties properties[] = {
-    CL_CONTEXT_PLATFORM,
-    (cl_context_properties)platform,
-    0
+  IntPtr[] properties = new []{
+      new IntPtr(ComputeContextInfo.Platform),
+      new IntPtr(platform),
+      IntPtr.Zero
   };
   // Note that nVidia's OpenCL requires the platform property
-  ctx->ctx = clCreateContext(properties, 1, &device, NULL, NULL, &error);
+  ctx.ctx = CL10.CreateContext(properties, 1, new []{device}, null, null, out error);
   assert(error == 0);
 
-  ctx->queue = clCreateCommandQueue(ctx->ctx, device, 0, &error);
+  ctx.queue = CL10.CreateCommandQueue(ctx.ctx, new[]{device}, 0, out error);
   assert(error == 0);
 
   // Make sure this function is defined.
   post_opencl_setup(ctx, &device_option);
 
-  if (ctx->cfg.debugging) {
-    fprintf(stderr, "Lockstep width: %d\n", (int)ctx->lockstep_width);
-    fprintf(stderr, "Default group size: %d\n", (int)ctx->cfg.default_group_size);
-    fprintf(stderr, "Default number of groups: %d\n", (int)ctx->cfg.default_num_groups);
+  if (ctx.cfg.debugging) {
+      Console.Error.WriteLine("Lockstep width: {0}\n", (int)ctx.lockstep_width);
+      Console.Error.WriteLine("Default group size: {0}\n", (int)ctx.cfg.default_group_size);
+      Console.Error.WriteLine("Default number of groups: {0}\n", (int)ctx.cfg.default_num_groups);
   }
 
-  char *fut_opencl_src = NULL;
-  size_t src_size = 0;
+  string fut_opencl_src;
 
   // Maybe we have to read OpenCL source from somewhere else (used for debugging).
-  if (ctx->cfg.load_program_from != NULL) {
-    FILE *f = fopen(ctx->cfg.load_program_from, "r");
-    assert(f != NULL);
-    fseek(f, 0, SEEK_END);
-    src_size = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    fut_opencl_src = malloc(src_size);
-    fread(fut_opencl_src, 1, src_size, f);
-    fclose(f);
+  if (ctx.cfg.load_program_from != null) {
+      fut_opencl_src = File.ReadAllText(ctx.cfg.load_program_from);
   } else {
-    // Build the OpenCL program.  First we have to concatenate all the fragments.
-    for (const char **src = srcs; src && *src; src++) {
-      src_size += strlen(*src);
-    }
-
-    fut_opencl_src = malloc(src_size + 1);
-
-    size_t n, i;
-    for (i = 0, n = 0; srcs && srcs[i]; i++) {
-      strncpy(fut_opencl_src+n, srcs[i], src_size-n);
-      n += strlen(srcs[i]);
-    }
-    fut_opencl_src[src_size] = 0;
-
+      // Build the OpenCL program.  First we have to concatenate all the fragments.
+      fut_opencl_src = string.Join("\n", srcs);
   }
 
-  cl_program prog;
+  CLProgramHandle prog;
   error = 0;
-  const char* src_ptr[] = {fut_opencl_src};
+  string[] src_ptr = new[]{fut_opencl_src};
+  IntPtr[] src_size = new []{IntrPtr.Zero};
 
-  if (ctx->cfg.dump_program_to != NULL) {
-    FILE *f = fopen(ctx->cfg.dump_program_to, "w");
-    assert(f != NULL);
-    fputs(fut_opencl_src, f);
-    fclose(f);
+  if (ctx.cfg.dump_program_to != null) {
+      File.WriteAllText(ctx.cfg.dump_program_to, fut_opencl_src);
   }
 
-  prog = clCreateProgramWithSource(ctx->ctx, 1, src_ptr, &src_size, &error);
+  prog = CL10.CreateProgramWithSource(ctx.ctx, 1, src_ptr, src_size, &error);
   assert(error == 0);
 
   int compile_opts_size = 1024;
-  for (int i = 0; i < ctx->cfg.num_sizes; i++) {
+  for (int i = 0; i < ctx.cfg.num_sizes; i++) {
     compile_opts_size += strlen(ctx->cfg.size_names[i]) + 20;
   }
-  char *compile_opts = malloc(compile_opts_size);
-
-  int w = snprintf(compile_opts, compile_opts_size,
-                   "-DFUT_BLOCK_DIM=%d -DLOCKSTEP_WIDTH=%d ",
-                   (int)ctx->cfg.transpose_block_dim,
-                   (int)ctx->lockstep_width);
+  string compile_opts = String.Format("-DFUT_BLOCK_DIM={0} -DLOCKSTEP_WIDTH={1} ",
+                                      ctx.cfg.transpose_block_dim,
+                                      ctx.lockstep_width);
 
   for (int i = 0; i < ctx->cfg.num_sizes; i++) {
-    w += snprintf(compile_opts+w, compile_opts_size-w,
-                  "-D%s=%d ", ctx->cfg.size_names[i],
-                  (int)ctx->cfg.size_values[i]);
+      compile_opts += String.Format("-D{0}={1} ",
+                                    ctx.cfg.size_names[i],
+                                    ctx.cfg.size_values[i]);
   }
 
-  OPENCL_SUCCEED(build_opencl_program(prog, device, compile_opts));
-  free(compile_opts);
-  free(fut_opencl_src);
+  OPENCL_SUCCEED(build_opencl_program(out prog, device, compile_opts));
 
   return prog;
 }

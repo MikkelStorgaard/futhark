@@ -6,6 +6,9 @@ module Futhark.CodeGen.Backends.CSOpenCL
 import Control.Monad
 import Data.List
 
+import qualified Language.C.Syntax as C
+import qualified Language.C.Quote.OpenCL as C
+
 import Futhark.Error
 import Futhark.Representation.ExplicitMemory (Prog, ExplicitMemory)
 import Futhark.CodeGen.Backends.CSOpenCL.Boilerplate
@@ -19,73 +22,105 @@ import Futhark.Util.Pretty(pretty)
 import Futhark.MonadFreshNames
 
 
---maybe pass the config file rather than multiple arguments
-compileProg :: MonadFreshNames m =>
-               Maybe String -> Prog ExplicitMemory ->  m (Either InternalError String)
-compileProg module_name prog = do
+compileProg :: MonadFreshNames m => Prog ExplicitMemory -> m (Either InternalError String)
+compileProg prog = do
   res <- ImpGen.compileProg prog
-  --could probably be a better way do to this..
   case res of
     Left err -> return $ Left err
-    Right (Imp.Program opencl_code opencl_prelude kernel_names types sizes prog')  -> do
-      --prepare the strings for assigning the kernels and set them as global
-      let assign = unlines $ map (\x -> pretty $ Assign (Var ("self."++x++"_var")) (Var $ "program."++x)) kernel_names
-
-      let defines =
-            [Assign (Var "synchronous") $ Bool False,
-             Assign (Var "preferred_platform") None,
-             Assign (Var "preferred_device") None,
-             Assign (Var "fut_opencl_src") $ RawStringLiteral $ opencl_prelude ++ opencl_code,
-             Escape pyReader,
-             Escape pyFunctions,
-             Escape pyPanic]
-      let imports = [Import "sys" Nothing,
-                     Import "numpy" $ Just "np",
-                     Import "ctypes" $ Just "ct",
-                     Escape openClPrelude,
-                     Import "pyopencl.array" Nothing,
-                     Import "time" Nothing]
-
-      let constructor = Py.Constructor [ "self"
-                                       , "interactive=False"
-                                       , "platform_pref=preferred_platform"
-                                       , "device_pref=preferred_device"
-                                       , "default_group_size=None"
-                                       , "default_num_groups=None"
-                                       , "default_tile_size=None"
-                                       , "sizes={}"]
-                        [Escape $ openClInit types assign sizes]
-          options = [ Option { optionLongName = "platform"
-                             , optionShortName = Just 'p'
-                             , optionArgument = RequiredArgument
-                             , optionAction =
-                               [ Assign (Var "preferred_platform") $ Var "optarg" ]
-                             }
-                    , Option { optionLongName = "device"
-                             , optionShortName = Just 'd'
-                             , optionArgument = RequiredArgument
-                             , optionAction =
-                               [ Assign (Var "preferred_device") $ Var "optarg" ]
-                             }]
-
-      Right <$> Py.compileProg module_name constructor imports defines operations ()
-        [Exp $ Py.simpleCall "self.queue.finish" []] options prog'
-  where operations :: Py.Operations Imp.OpenCL ()
-        operations = Py.Operations
-                     { Py.opsCompiler = callKernel
-                     , Py.opsWriteScalar = writeOpenCLScalar
-                     , Py.opsReadScalar = readOpenCLScalar
-                     , Py.opsAllocate = allocateOpenCLBuffer
-                     , Py.opsCopy = copyOpenCLMemory
-                     , Py.opsStaticArray = staticOpenCLArray
-                     , Py.opsEntryOutput = packArrayOutput
-                     , Py.opsEntryInput = unpackArrayInput
+    Right (Program opencl_code opencl_prelude kernel_names types sizes prog') ->
+      Right <$> CS.compileProg operations
+                (generateBoilerplate opencl_code opencl_prelude kernel_names types sizes) ()
+                [Space "device", Space "local", DefaultSpace]
+                cliOptions prog'
+  where operations :: CS.Operations OpenCL ()
+        operations = CS.Operations
+                     { CS.opsCompiler = callKernel
+                     , CS.opsWriteScalar = writeOpenCLScalar
+                     , CS.opsReadScalar = readOpenCLScalar
+                     , CS.opsAllocate = allocateOpenCLBuffer
+                     , CS.opsDeallocate = deallocateOpenCLBuffer
+                     , CS.opsCopy = copyOpenCLMemory
+                     , CS.opsStaticArray = staticOpenCLArray
+                     , CS.opsMemoryType = openclMemoryType
+                     , CS.opsFatMemory = True
                      }
 
--- We have many casts to 'long', because PyOpenCL may get confused at
--- the 32-bit numbers that ImpCode uses for offsets and the like.
-asLong :: CSExp -> CSExp
-asLong x = CS.simpleCall "Convert.ToInt64" [x]
+cliOptions :: [Option]
+cliOptions = [ Option { optionLongName = "platform"
+                      , optionShortName = Just "p"
+                      , optionArgument = RequiredArgument
+                      , optionAction = [Escape "futhark_context_config_set_platform(cfg, optarg);"]
+                      }
+             , Option { optionLongName = "device"
+                      , optionShortName = Just 'd'
+                      , optionArgument = RequiredArgument
+                      , optionAction = [Escape "futhark_context_config_set_device(cfg, optarg);"]
+                      }
+             ]
+
+{-
+             , Option { optionLongName = "default-group-size"
+                      , optionShortName = Nothing
+                      , optionArgument = RequiredArgument
+                      , optionAction = [C.cstm|futhark_context_config_set_default_group_size(cfg, atoi(optarg));|]
+                      }
+             , Option { optionLongName = "default-num-groups"
+                      , optionShortName = Nothing
+                      , optionArgument = RequiredArgument
+                      , optionAction = [C.cstm|futhark_context_config_set_default_num_groups(cfg, atoi(optarg));|]
+                      }
+             , Option { optionLongName = "default-tile-size"
+                      , optionShortName = Nothing
+                      , optionArgument = RequiredArgument
+                      , optionAction = [C.cstm|futhark_context_config_set_default_tile_size(cfg, atoi(optarg));|]
+                      }
+             , Option { optionLongName = "default-threshold"
+                      , optionShortName = Nothing
+                      , optionArgument = RequiredArgument
+                      , optionAction = [C.cstm|futhark_context_config_set_default_threshold(cfg, atoi(optarg));|]
+                      }
+             , Option { optionLongName = "dump-opencl"
+                      , optionShortName = Nothing
+                      , optionArgument = RequiredArgument
+                      , optionAction = [C.cstm|futhark_context_config_dump_program_to(cfg, optarg);|]
+                      }
+             , Option { optionLongName = "load-opencl"
+                      , optionShortName = Nothing
+                      , optionArgument = RequiredArgument
+                      , optionAction = [C.cstm|futhark_context_config_load_program_from(cfg, optarg);|]
+                      }
+             , Option { optionLongName = "print-sizes"
+                      , optionShortName = Nothing
+                      , optionArgument = NoArgument
+                      , optionAction = [C.cstm|{
+                          int n = futhark_get_num_sizes();
+                          for (int i = 0; i < n; i++) {
+                            printf("%s (%s)\n", futhark_get_size_name(i),
+                                                futhark_get_size_class(i));
+                          }
+                          exit(0);
+                        }|]
+                      }
+             , Option { optionLongName = "size"
+                      , optionShortName = Nothing
+                      , optionArgument = RequiredArgument
+                      , optionAction = [C.cstm|{
+                          char *name = optarg;
+                          char *equals = strstr(optarg, "=");
+                          char *value_str = equals != NULL ? equals+1 : optarg;
+                          int value = atoi(value_str);
+                          if (equals != NULL) {
+                            *equals = 0;
+                            if (futhark_context_config_set_size(cfg, name, value) != 0) {
+                              panic(1, "Unknown size: %s\n", name);
+                            }
+                          } else {
+                            panic(1, "Invalid argument for size option: %s\n", optarg);
+                          }}|]
+                      }
+             ]
+-}
+
 
 callKernel :: CS.OpCompiler Imp.OpenCL ()
 callKernel (Imp.GetSize v key) =
@@ -232,7 +267,7 @@ copyOpenCLMemory _ _ destspace _ _ srcspace _ _=
 
 staticOpenCLArray :: CL.StaticArray Imp.OpenCL ()
 staticOpenCLArray name "device" t vs = do
-  mapM_ Py.atInit <=< Py.collect $ do
+  mapM_ CS.atInit <=< CS.collect $ do
     -- Create host-side C# array with intended values.
     tmp_arr <- newVName "tmp_arr"
     Py.stm $ Assign (Var tmp_arr) $

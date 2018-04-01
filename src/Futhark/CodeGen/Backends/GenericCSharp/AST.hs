@@ -23,6 +23,8 @@ module Futhark.CodeGen.Backends.GenericCSharp.AST
 
 import Language.Futhark.Core
 import Futhark.Util.Pretty
+import Language.C.Quote.OpenCL()
+import qualified Language.C.Syntax as C
 
 data MemT = Pointer
           deriving (Eq, Show)
@@ -53,8 +55,10 @@ data CSType = Composite CSComp
             | PointerT CSType
             | Primitive CSPrim
             | MemoryT String
-            | VoidT
             | CustomT String
+            | StaticT CSType
+            | OutT CSType
+            | VoidT
             deriving (Eq, Show)
 
 data CSComp = ArrayT CSType
@@ -75,6 +79,8 @@ instance Pretty CSType where
   ppr (Primitive t) = ppr t
   ppr (CustomT t) = text t
   ppr (MemoryT _) = text "byte[]"
+  ppr (StaticT t) = text "static" <+> ppr t
+  ppr (OutT t) = text "out" <+> ppr t
   ppr VoidT = text "void"
 
 instance Pretty CSPrim where
@@ -112,6 +118,7 @@ data CSExp = Integer Integer
            | Deref String
            | BinOp String CSExp CSExp
            | UnOp String CSExp
+           | Ternary CSExp CSExp CSExp
            | Cond CSExp CSExp CSExp
            | Index CSExp CSIdx
            | Pair CSExp CSExp
@@ -145,6 +152,7 @@ instance Pretty CSExp where
   ppr (Deref n) =  text "*" <> text (map (\x -> if x == '\'' then 'm' else x) n)
   ppr (BinOp s e1 e2) = parens(ppr e1 <+> text s <+> ppr e2)
   ppr (UnOp s e) = text s <> parens (ppr e)
+  ppr (Ternary b e1 e2) = ppr b <+> text "?" <+> ppr e1 <+> colon <+> ppr e2
   ppr (Cond e1 e2 e3) = text "if" <+> parens(ppr e1) <> braces(ppr e2) <+> text "else" <> braces(ppr e3)
   ppr (Cast bt src) = parens(ppr bt) <+> ppr src
   ppr (Index src (IdxExp idx)) = ppr src <> brackets(ppr idx)
@@ -161,7 +169,7 @@ instance Pretty CSExp where
   ppr (Lambda expr stmts) = ppr expr <+> text "=>" <+> braces(stack $ map ppr stmts)
   ppr (Collection collection exps) = text "new" <+> text collection <> braces(commasep $ map ppr exps)
   ppr Null = text "null"
-  ppr (AllocArray t length) = text "new" <+> (ppr t) <> lbracket <> ppr length <> rbracket
+  ppr (AllocArray t len) = text "new" <+> ppr t <> lbracket <> ppr len <> rbracket
   --ppr (Dict exps) = undefined
 
 
@@ -204,6 +212,9 @@ data CSStmt = If CSExp [CSStmt] [CSStmt]
             | FunDef CSFunDef
             | ClassDef CSClassDef
             | ConstructorDef CSConstructorDef
+            | StructDef String [(CSType, String)]
+
+            | CSDecl C.BlockItem
 
               -- Some arbitrary string of CS code.
             | Escape String
@@ -301,17 +312,21 @@ instance Pretty CSStmt where
 
   ppr (ConstructorDef d) = ppr d
 
+  ppr (StructDef name assignments) = text "struct" <+> text name <> braces(stack $ map (\a -> text "public" <+> ppr a) assignments)
+
+  ppr (CSDecl decl) = text $ show decl
+
   ppr (Escape s) = stack $ map text $ lines s
 
   ppr Pass = empty
 
 instance Pretty CSFunDef where
   ppr (Def fname retType args stmts) =
-    ppr retType <+> text fname <> parens(commasep(map ppr' args)) </>
+    ppr retType <+> text fname <> parens( commasep(map ppr' args) ) </>
     lbrace </>
     indent 4 (stack (map ppr stmts)) </>
     rbrace
-    where ppr' (var, tp) = ppr tp <+> text var
+    where ppr' (tp, var) = ppr tp <+> text var
 
 instance Pretty CSClassDef where
   ppr (Class cname body) =
@@ -337,7 +352,7 @@ instance Pretty CSExcept where
 data CSExcept = Catch CSExp [CSStmt]
               deriving (Eq, Show)
 
-type CSFunDefArg = (String, CSType)
+type CSFunDefArg = (CSType, String)
 data CSFunDef = Def String CSType [CSFunDefArg] [CSStmt]
                   deriving (Eq, Show)
 

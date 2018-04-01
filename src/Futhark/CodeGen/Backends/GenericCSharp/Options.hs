@@ -37,9 +37,9 @@ generateOptionParser options =
   , Assign (Var "extra") (Call (Var "options.Parse") [Arg Nothing (Var "args")])
   ]
     -- generate options
-    -- try 
+    -- try
     --   parse options
-    -- catch 
+    -- catch
     --   write help
     --   write options
   where parseOption option = Array [ String $ option_string option

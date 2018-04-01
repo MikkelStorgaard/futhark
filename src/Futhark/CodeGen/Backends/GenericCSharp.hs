@@ -14,6 +14,7 @@ module Futhark.CodeGen.Backends.GenericCSharp
   , compilePrimValue
   , compilePrimType
   , compilePrimTypeExt
+  , contextFinalInits
 
   , Operations (..)
   , defaultOperations
@@ -38,8 +39,11 @@ module Futhark.CodeGen.Backends.GenericCSharp
   , collect'
   , collect
   , simpleCall
+  , simpleInitClass
 
   , copyMemoryDefaultSpace
+  , publicName
+  , sizeOf
   ) where
 
 import Control.Monad.Identity
@@ -218,6 +222,9 @@ atInit :: CSStmt -> CompilerM op s ()
 atInit x = modify $ \s ->
   s { compInit = compInit s ++ [x] }
 
+contextFinalInits :: CompilerM op s [CSStmt]
+contextFinalInits = gets compInit
+
 stm :: CSStmt -> CompilerM op s ()
 stm x = tell [x]
 
@@ -354,12 +361,12 @@ compileProg module_name constructor imports defines ops userstate pre_timing opt
                        Class name $
                          constructor' : defines ++ map FunDef (definitions ++ entry_point_defs) ++
                          member_decls ++
-                         [PublicFunDef $ Def "internal_entry" VoidT [("args", string_array)] $
+                         [PublicFunDef $ Def "internal_entry" VoidT [(string_arrayT, "args")] $
                            parse_options ++ selectEntryPoint entry_point_names entry_points]) :
-                     [ClassDef $ Class "Program" [StaticFunDef $ Def "Main" VoidT [("args", string_array)] main_entry]])
+                     [ClassDef $ Class "Program" [StaticFunDef $ Def "Main" VoidT [(string_arrayT,"args")] main_entry]])
 
 
-        string_array = Composite $ ArrayT $ Primitive StringT
+        string_arrayT = Composite $ ArrayT $ Primitive StringT
         main_entry :: [CSStmt]
         main_entry = [ Assign (Var "internal_instance") (simpleInitClass "FutharkInternal" [])
                      , Exp $ simpleCall "internal_instance.internal_entry" [Var "args"]
@@ -408,8 +415,8 @@ getDecl :: (CSExp, CSType) -> CSStmt
 getDecl (v,t) = AssignTyped t v Nothing
 
 
-compileTypedInput :: Imp.Param -> (String, CSType)
-compileTypedInput input = (nameFun input, typeFun input)
+compileTypedInput :: Imp.Param -> (CSType, String)
+compileTypedInput input = (typeFun input, nameFun input)
   where nameFun = compileName . Imp.paramName
         typeFun = compileType . paramType
 
@@ -563,6 +570,9 @@ extValueDescName (Imp.OpaqueValue desc (v:_)) =
 extName :: String -> String
 extName = (++"_ext")
 
+sizeOf :: CSType -> CSExp
+sizeOf t = simpleCall "sizeOf" [(Var . pretty) t]
+
 valueDescName :: Imp.ValueDesc -> String
 valueDescName = compileName . valueDescVName
 
@@ -698,10 +708,10 @@ printValue = fmap concat . mapM (uncurry printValue')
           return [p, Exp $ simpleCall "Console.Write" [String "\n"]]
 
 prepareEntry :: (Name, Imp.Function op) -> CompilerM op s
-                (String, [(String,CSType)], CSType, [CSStmt], [CSStmt], [CSStmt], [CSStmt],
+                (String, [(CSType, String)], CSType, [CSStmt], [CSStmt], [CSStmt], [CSStmt],
                  [(Imp.ExternalValue, CSExp)], [CSStmt])
 prepareEntry (fname, Imp.Function _ outputs inputs _ results args) = do
-  let (output_paramNames, output_types) = unzip $ map compileTypedInput outputs
+  let (output_types, output_paramNames) = unzip $ map compileTypedInput outputs
       funTuple = tupleOrSingle $ fmap Var output_paramNames
 
   (argexps_mem_copies, prepare_run) <- collect' $ forM inputs $ \case
@@ -733,8 +743,8 @@ prepareEntry (fname, Imp.Function _ outputs inputs _ results args) = do
   let argexps_lib = map (compileName . Imp.paramName) inputs
       argexps_bin = zipWith fromMaybe argexps_lib argexps_mem_copies
       fname' = futharkFun (nameToString fname)
-      arg_types = map (snd . compileTypedInput) inputs
-      inputs' = zip (map extValueDescName args) arg_types
+      arg_types = map (fst . compileTypedInput) inputs
+      inputs' = zip arg_types (map extValueDescName args)
       output_type = tupleOrSingleT output_types
       call_lib = [Reassign funTuple $ simpleCall fname' (fmap Var argexps_lib)]
       call_bin = [Reassign funTuple $ simpleCall fname' (fmap Var argexps_bin)]
@@ -1163,3 +1173,7 @@ compileCode (Imp.Write dest (Imp.Count idx) elemtype (Imp.Space space) _ elemexp
     <*> compileExp elemexp
 
 compileCode Imp.Skip = return ()
+
+-- | Public names must have a consitent prefix.
+publicName :: String -> String
+publicName s = "futhark_" ++ s
