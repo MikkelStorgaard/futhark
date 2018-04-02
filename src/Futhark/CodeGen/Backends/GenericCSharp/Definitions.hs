@@ -6,6 +6,7 @@ module Futhark.CodeGen.Backends.GenericCSharp.Definitions
   , csScalar
   , csPanic
   , csExceptions
+  , csOpenCL
   ) where
 
 import Data.FileEmbed
@@ -27,3 +28,6 @@ csPanic = $(embedStringFile "rts/csharp/panic.cs")
 
 csExceptions :: String
 csExceptions = $(embedStringFile "rts/csharp/exceptions.cs")
+
+csOpenCL :: String
+csOpenCL = $(embedStringFile "rts/csharp/opencl.cs")

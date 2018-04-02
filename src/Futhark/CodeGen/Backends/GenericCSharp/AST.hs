@@ -7,6 +7,7 @@ module Futhark.CodeGen.Backends.GenericCSharp.AST
   , CSComp(..)
   , CSPrim(..)
   , CSInt(..)
+  , CSUInt(..)
   , CSFloat(..)
   , CSIdx (..)
   , CSArg (..)
@@ -47,6 +48,12 @@ data CSInt = Int8T
            | Int64T
            deriving (Eq, Show)
 
+data CSUInt = UInt8T
+            | UInt16T
+            | UInt32T
+            | UInt64T
+            deriving (Eq, Show)
+
 data CSFloat = FloatT
              | DoubleT
              deriving (Eq, Show)
@@ -66,6 +73,7 @@ data CSComp = ArrayT CSType
             deriving (Eq, Show)
 
 data CSPrim = CSInt CSInt
+            | CSUInt CSUInt
             | CSFloat CSFloat
             | BoolT
             | ByteT
@@ -92,10 +100,16 @@ instance Pretty CSPrim where
   ppr IntPtrT = text "IntPtr"
 
 instance Pretty CSInt where
-  ppr Int8T = text "byte"
+  ppr Int8T = text "sbyte"
   ppr Int16T = text "short"
   ppr Int32T = text "int"
   ppr Int64T = text "long"
+
+instance Pretty CSUInt where
+  ppr UInt8T = text "byte"
+  ppr UInt16T = text "ushort"
+  ppr UInt32T = text "uint"
+  ppr UInt64T = text "ulong"
 
 instance Pretty CSFloat where
   ppr FloatT = text "float"

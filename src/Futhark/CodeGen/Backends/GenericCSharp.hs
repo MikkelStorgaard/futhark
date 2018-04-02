@@ -14,7 +14,10 @@ module Futhark.CodeGen.Backends.GenericCSharp
   , compilePrimValue
   , compilePrimType
   , compilePrimTypeExt
+  , compilePrimTypeToAST
+  , compilePrimTypeToASText
   , contextFinalInits
+  , debugReport
 
   , Operations (..)
   , defaultOperations
@@ -40,8 +43,14 @@ module Futhark.CodeGen.Backends.GenericCSharp
   , collect
   , simpleCall
   , simpleInitClass
+  , parametrizedCall
 
   , copyMemoryDefaultSpace
+  , consoleErrorWrite
+  , consoleErrorWriteLine
+  , consoleWrite
+  , consoleWriteLine
+
   , publicName
   , sizeOf
   , funDef
@@ -63,7 +72,7 @@ import Futhark.Representation.AST.Syntax (Space(..))
 import qualified Futhark.CodeGen.ImpCode as Imp
 import Futhark.CodeGen.Backends.GenericCSharp.AST
 import Futhark.CodeGen.Backends.GenericCSharp.Options
-import Futhark.CodeGen.Backends.GenericCSharp.Definitions()
+import Futhark.CodeGen.Backends.GenericCSharp.Definitions
 import Futhark.Util.Pretty(pretty)
 import Futhark.Util (zEncodeString)
 import Futhark.Representation.AST.Attributes (builtInFunctions)
@@ -319,29 +328,40 @@ compileProg :: MonadFreshNames m =>
             -> Constructor
             -> [CSStmt]
             -> [CSStmt]
-            -> [CSStmt]
             -> Operations op s
             -> s
+            -> CompilerM op s ()
             -> [CSStmt]
+            -> [Space]
             -> [Option]
             -> Imp.Functions op
             -> m String
-compileProg module_name constructor imports ending defines ops userstate pre_timing options prog@(Imp.Functions funs) = do
+compileProg module_name constructor imports defines ops userstate boilerplate pre_timing spaces options prog@(Imp.Functions funs) = do
   src <- getNameSource
   let prog' = runCompilerM prog ops src userstate compileProg'
-  return $ pretty (CSProg $
-                    [Escape "#define DEBUG"] ++
-                    imports ++
-                    prog')
+  let imports' = [ Using Nothing "System"
+                 , Using Nothing "System.Diagnostics"
+                 , Using Nothing "System.Collections"
+                 , Using Nothing "System.Collections.Generic"
+                 , Using Nothing "System.IO"
+                 , Using Nothing "System.Linq"
+                 , Using Nothing "static System.ValueTuple"
+                 , Using Nothing "static System.Convert"
+                 , Using Nothing "static System.Math"
+                 , Using Nothing "Mono.Options" ] ++ imports
+
+  return $ pretty (CSProg $ Escape "#define DEBUG" : imports' ++ prog')
   where compileProg' = do
           definitions <- mapM compileFunc funs
           at_inits <- gets compInit
+          opencl_boilerplate <- collect boilerplate
 
           case module_name of
             Just name -> do
               entry_points <- mapM compileEntryFun $ filter (Imp.functionEntry . snd) funs
               let constructor' = constructorToConstructorDef constructor name at_inits
-              return [ClassDef $ Class name $ constructor' : defines ++ map FunDef (definitions ++ entry_points)]
+              return [ClassDef $ Class name $ constructor' : defines' ++ opencl_boilerplate ++
+                      map FunDef (definitions ++ entry_points)]
 
 
             Nothing -> do
@@ -351,12 +371,15 @@ compileProg module_name constructor imports ending defines ops userstate pre_tim
                 unzip3 <$> mapM (callEntryFun pre_timing)
                 (filter (Imp.functionEntry . snd) funs)
 
+              debug_ending <- gets compDebugItems
               return ((ClassDef $
                        Class name $
-                         constructor' : defines ++ map FunDef (definitions ++ entry_point_defs) ++
-                         member_decls ++
+                         constructor' : defines' ++ opencl_boilerplate ++
+                         map FunDef (definitions ++ entry_point_defs) ++ member_decls ++
                          [PublicFunDef $ Def "internal_entry" VoidT [(string_arrayT, "args")] $
-                           parse_options ++ selectEntryPoint entry_point_names entry_points]) :
+                           parse_options ++ selectEntryPoint entry_point_names entry_points
+                           ++ debug_ending
+                         ]) :
                      [ClassDef $ Class "Program"
                        [StaticFunDef $ Def "Main" VoidT [(string_arrayT,"args")] main_entry]])
 
@@ -373,6 +396,11 @@ compileProg module_name constructor imports ending defines ops userstate pre_tim
           , AssignTyped (Primitive BoolT) (Var "do_warmup_run") (Just $ Bool False)
           , AssignTyped (Primitive $ CSInt Int32T) (Var "num_runs") (Just $ Integer 1)
           , AssignTyped (Primitive StringT) (Var "entry_point") (Just $ String "main")]
+
+        defines' = [ Escape csScalar
+                   , Escape csMemory
+                   , Escape csExceptions
+                   , Escape csReader] ++ defines
 
         parse_options =
           generateOptionParser (standardOptions ++ options)
@@ -406,9 +434,6 @@ compileFunc (fname, Imp.Function _ outputs inputs body _ _) = do
   let ret' = Return $ tupleOrSingle ret
 
   return $ Def (futharkFun . nameToString $ fname) retType' inputs' (outputDecls++body'++[ret'])
-
-getDecl :: (CSExp, CSType) -> CSStmt
-getDecl (v,t) = AssignTyped t v Nothing
 
 
 compileTypedInput :: Imp.Param -> (CSType, String)
@@ -465,6 +490,20 @@ compilePrimTypeToAST (FloatType Float64) = Primitive $ CSFloat DoubleT
 compilePrimTypeToAST Imp.Bool = Primitive BoolT
 compilePrimTypeToAST Imp.Cert = Primitive BoolT
 
+compilePrimTypeToASText :: PrimType -> Imp.Signedness -> CSType
+compilePrimTypeToASText (IntType Int8) Imp.TypeUnsigned = Primitive  $ CSUInt UInt8T
+compilePrimTypeToASText (IntType Int16) Imp.TypeUnsigned = Primitive $ CSUInt UInt16T
+compilePrimTypeToASText (IntType Int32) Imp.TypeUnsigned = Primitive $ CSUInt UInt32T
+compilePrimTypeToASText (IntType Int64) Imp.TypeUnsigned = Primitive $ CSUInt UInt64T
+compilePrimTypeToASText (IntType Int8) _ = Primitive $ CSInt Int8T
+compilePrimTypeToASText (IntType Int16) _ = Primitive $ CSInt Int16T
+compilePrimTypeToASText (IntType Int32) _ = Primitive $ CSInt Int32T
+compilePrimTypeToASText (IntType Int64) _ = Primitive $ CSInt Int64T
+compilePrimTypeToASText (FloatType Float32) _ = Primitive $ CSFloat FloatT
+compilePrimTypeToASText (FloatType Float64) _ = Primitive $ CSFloat DoubleT
+compilePrimTypeToASText Imp.Bool _ = Primitive BoolT
+compilePrimTypeToASText Imp.Cert _ = Primitive BoolT
+
 compileDim :: Imp.DimSize -> CSExp
 compileDim (Imp.ConstSize i) = Integer $ toInteger i
 compileDim (Imp.VarSize v) = Var $ compileName v
@@ -518,13 +557,8 @@ entryPointInput (i, Imp.OpaqueValue desc vs, e) = do
   mapM_ entryPointInput $ zip3 (repeat i) (map Imp.TransparentValue vs) $
     map (Index (Field e "data") . IdxExp . Integer) [0..]
 
-entryPointInput (i, Imp.TransparentValue (Imp.ScalarValue bt s name), e) = do
+entryPointInput (_, Imp.TransparentValue (Imp.ScalarValue bt _ name), e) = do
   let vname' = Var $ compileName name
-      -- HACK: A Numpy int64 will signal an OverflowError if we pass
-      -- it a number bigger than 2**63.  This does not happen if we
-      -- pass e.g. int8 a number bigger than 2**7.  As a workaround,
-      -- we first go through the corresponding ctypes type, which does
-      -- not have this problem.
       csconverter = compileTypeConverter bt
       cscall = simpleCall csconverter [e]
   stm $ Assign vname' cscall
@@ -552,7 +586,7 @@ entryPointInput (i, Imp.TransparentValue (Imp.ArrayValue mem memsize Imp.Default
 
   stm $ Assign dest unwrap_call
 
-entryPointInput (i, Imp.TransparentValue (Imp.ArrayValue mem memsize (Imp.Space sid) bt ept dims), e) = do
+entryPointInput (_, Imp.TransparentValue (Imp.ArrayValue mem memsize (Imp.Space sid) bt ept dims), e) = do
   unpack_input <- asks envEntryInput
   unpack <- collect $ unpack_input mem memsize sid bt ept dims e
   stms unpack

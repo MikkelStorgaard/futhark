@@ -8,9 +8,8 @@ import Futhark.Error
 import Futhark.Representation.ExplicitMemory
 import qualified Futhark.CodeGen.ImpCode.Sequential as Imp
 import qualified Futhark.CodeGen.ImpGen.Sequential as ImpGen
-import qualified Futhark.CodeGen.Backends.GenericCSharp as GenericCSharp
+import qualified Futhark.CodeGen.Backends.GenericCSharp as CS
 import Futhark.CodeGen.Backends.GenericCSharp.AST (CSStmt(Using, Escape))
-import Futhark.CodeGen.Backends.GenericCSharp.Definitions
 
 
 import Futhark.MonadFreshNames
@@ -19,34 +18,26 @@ compileProg :: MonadFreshNames m =>
                Maybe String -> Prog ExplicitMemory -> m (Either InternalError String)
 compileProg module_name =
   ImpGen.compileProg >=>
-  traverse (GenericCSharp.compileProg
-            module_name
-            GenericCSharp.emptyConstructor
-            imports
-            defines
-            operations () [] [])
-  where imports = [ Using Nothing "System"
-                  , Using Nothing "System.Diagnostics"
-                  , Using Nothing "System.Collections"
-                  , Using Nothing "System.Collections.Generic"
-                  , Using Nothing "System.IO"
-                  , Using Nothing "System.Linq"
-                  , Using Nothing "static System.ValueTuple"
-                  , Using Nothing "static System.Convert"
-                  , Using Nothing "static System.Math"
-                  , Using Nothing "Mono.Options"
-                  , Using Nothing "Cloo"
-                  ]
-        defines = [ Escape csScalar, Escape csMemory
-                  , Escape csExceptions, Escape csReader]
-        operations :: GenericCSharp.Operations Imp.Sequential ()
-        operations = GenericCSharp.defaultOperations
-                     { GenericCSharp.opsCompiler = const $ return ()
-                     , GenericCSharp.opsCopy = copySequentialMemory
+  traverse (CS.compileProg
+             module_name
+             CS.emptyConstructor
+             []
+             []
+             operations
+             ()
+             empty
+             []
+             []
+             [])
+  where operations :: CS.Operations Imp.Sequential ()
+        operations = CS.defaultOperations
+                     { CS.opsCompiler = const $ return ()
+                     , CS.opsCopy = copySequentialMemory
                      }
+        empty = return ()
 
-copySequentialMemory :: GenericCSharp.Copy Imp.Sequential ()
+copySequentialMemory :: CS.Copy Imp.Sequential ()
 copySequentialMemory destmem destidx DefaultSpace srcmem srcidx DefaultSpace nbytes _bt =
-  GenericCSharp.copyMemoryDefaultSpace destmem destidx srcmem srcidx nbytes
+  CS.copyMemoryDefaultSpace destmem destidx srcmem srcidx nbytes
 copySequentialMemory _ _ destspace _ _ srcspace _ _ =
   error $ "Cannot copy to " ++ show destspace ++ " from " ++ show srcspace

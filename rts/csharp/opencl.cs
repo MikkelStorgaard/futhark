@@ -49,21 +49,19 @@ void opencl_config_init(out opencl_config cfg,
     cfg.size_classes = size_classes;
 }
 
-struct opencl_context {
-  CLPlatformHandle platform;
-  CLDeviceHandle device;
-  CLContextHandle ctx;
-  CLCommandQueueHandle queue;
+CLPlatformHandle platform;
+CLDeviceHandle device;
+CLContextHandle ctx;
+CLCommandQueueHandle queue;
 
-  opencl_config cfg;
+opencl_config cfg;
 
-  int max_group_size;
-  int max_num_groups;
-  int max_tile_size;
-  int max_threshold;
+int max_group_size;
+int max_num_groups;
+int max_tile_size;
+int max_threshold;
 
-  int lockstep_width;
-};
+int lockstep_width;
 
 struct opencl_device_option {
   CLPlatformHandle platform;
@@ -81,62 +79,62 @@ struct opencl_device_option {
 string opencl_error_string(uint err)
 {
     switch (err) {
-        case Success:                            return "Success!";
-        case DeviceNotFound:                   return "Device not found.";
-        case DeviceNotAvailable:               return "Device not available";
-        case CompilerNotAvailable:             return "Compiler not available";
-        case MemoryObjectAllocationFailure:      return "Memory object allocation failure";
-        case OutOfResources:                   return "Out of resources";
-        case OutOfHostMemory:                 return "Out of host memory";
-        case ProfilingInfoNotAvailable:       return "Profiling information not available";
-        case MemoryCopyOverlap:                   return "Memory copy overlap";
-        case ImageFormatMismatch:              return "Image format mismatch";
-        case ImageFormatNotSupported:         return "Image format not supported";
-        case BuildProgramFailure:              return "Program build failure";
-        case MapFailure:                        return "Map failure";
-        case InvalidValue:                      return "Invalid value";
-        case InvalidDevicetype:                return "Invalid device type";
-        case InvalidPlatform:                   return "Invalid platform";
-        case InvalidDevice:                     return "Invalid device";
-        case InvalidContext:                    return "Invalid context";
-        case InvalidCommandQueueFlags:           return "Invalid queue properties";
-        case InvalidCommandQueue:              return "Invalid command queue";
-        case InvalidHostPointer:                   return "Invalid host pointer";
-        case InvalidMemoryObject:                 return "Invalid memory object";
-        case InvalidImageFormatDescriptor:    return "Invalid image format descriptor";
-        case InvalidImageSize:                 return "Invalid image size";
-        case InvalidSampler:                    return "Invalid sampler";
-        case InvalidBinary:                     return "Invalid binary";
-        case InvalidBuildOptions:              return "Invalid build options";
-        case InvalidProgram:                    return "Invalid program";
-        case InvalidProgramExecutable:         return "Invalid program executable";
-        case InvalidKernelName:                return "Invalid kernel name";
-        case InvalidKernelDefinition:          return "Invalid kernel definition";
-        case InvalidKernel:                     return "Invalid kernel";
-        case InvalidArgumentIndex:                  return "Invalid argument index";
-        case InvalidArgumentValue:                  return "Invalid argument value";
-        case InvalidArgumentSize:                   return "Invalid argument size";
-        case InvalidKernelArguments:                return "Invalid kernel arguments";
-        case InvalidWorkDimension:             return "Invalid work dimension";
-        case InvalidWorkGroupSize:            return "Invalid work group size";
-        case InvalidWorkItemSize:             return "Invalid work item size";
-        case InvalidGlobalOffset:              return "Invalid global offset";
-        case InvalidEventWaitList:            return "Invalid event wait list";
-        case InvalidEvent:                      return "Invalid event";
-        case InvalidOperation:                  return "Invalid operation";
-        case InvalidGLObject:                  return "Invalid OpenGL object";
-        case InvalidBufferSize:                return "Invalid buffer size";
-        case InvalidMipLevel:                  return "Invalid mip-map level";
-        default:                                    return "Unknown";
+        case Success:                                        return "Success!";
+        case DeviceNotFound:                                 return "Device not found.";
+        case DeviceNotAvailable:                             return "Device not available";
+        case CompilerNotAvailable:                           return "Compiler not available";
+        case MemoryObjectAllocationFailure:                  return "Memory object allocation failure";
+        case OutOfResources:                                 return "Out of resources";
+        case OutOfHostMemory:                                return "Out of host memory";
+        case ProfilingInfoNotAvailable:                      return "Profiling information not available";
+        case MemoryCopyOverlap:                              return "Memory copy overlap";
+        case ImageFormatMismatch:                            return "Image format mismatch";
+        case ImageFormatNotSupported:                        return "Image format not supported";
+        case BuildProgramFailure:                            return "Program build failure";
+        case MapFailure:                                     return "Map failure";
+        case InvalidValue:                                   return "Invalid value";
+        case InvalidDevicetype:                              return "Invalid device type";
+        case InvalidPlatform:                                return "Invalid platform";
+        case InvalidDevice:                                  return "Invalid device";
+        case InvalidContext:                                 return "Invalid context";
+        case InvalidCommandQueueFlags:                       return "Invalid queue properties";
+        case InvalidCommandQueue:                            return "Invalid command queue";
+        case InvalidHostPointer:                             return "Invalid host pointer";
+        case InvalidMemoryObject:                            return "Invalid memory object";
+        case InvalidImageFormatDescriptor:                   return "Invalid image format descriptor";
+        case InvalidImageSize:                               return "Invalid image size";
+        case InvalidSampler:                                 return "Invalid sampler";
+        case InvalidBinary:                                  return "Invalid binary";
+        case InvalidBuildOptions:                            return "Invalid build options";
+        case InvalidProgram:                                 return "Invalid program";
+        case InvalidProgramExecutable:                       return "Invalid program executable";
+        case InvalidKernelName:                              return "Invalid kernel name";
+        case InvalidKernelDefinition:                        return "Invalid kernel definition";
+        case InvalidKernel:                                  return "Invalid kernel";
+        case InvalidArgumentIndex:                           return "Invalid argument index";
+        case InvalidArgumentValue:                           return "Invalid argument value";
+        case InvalidArgumentSize:                            return "Invalid argument size";
+        case InvalidKernelArguments:                         return "Invalid kernel arguments";
+        case InvalidWorkDimension:                           return "Invalid work dimension";
+        case InvalidWorkGroupSize:                           return "Invalid work group size";
+        case InvalidWorkItemSize:                            return "Invalid work item size";
+        case InvalidGlobalOffset:                            return "Invalid global offset";
+        case InvalidEventWaitList:                           return "Invalid event wait list";
+        case InvalidEvent:                                   return "Invalid event";
+        case InvalidOperation:                               return "Invalid operation";
+        case InvalidGLObject:                                return "Invalid OpenGL object";
+        case InvalidBufferSize:                              return "Invalid buffer size";
+        case InvalidMipLevel:                                return "Invalid mip-map level";
+        default:                                             return "Unknown";
     }
 }
 
-static void opencl_succeed(int ret,
-                           string call,
-                           string file,
-                           int line) {
+void opencl_succeed(int ret,
+                    string call,
+                    string file,
+                    int line) {
   if (ret != CL_SUCCESS) {
-    panic(-1, "%s:%d: OpenCL call\n  %s\nfailed with error code %d (%s)\n",
+    panic(-1, "{0}:{1}: OpenCL call\n  {2}\nfailed with error code {3} ({4})\n",
           file, line, call, ret, opencl_error_string(ret));
   }
 }
@@ -361,8 +359,7 @@ enum opencl_required_type { OPENCL_F64 = 1 };
 // C does not guarantee that the compiler supports particularly large
 // literals.  Notably, Visual C has a limit of 2048 characters.  The
 // array must be NULL-terminated.
-CLProgramHandle setup_opencl(out opencl_context ctx,
-                             string[] srcs,
+CLProgramHandle setup_opencl(string[] srcs,
                              int required_types) {
 
   int error;
@@ -370,16 +367,16 @@ CLProgramHandle setup_opencl(out opencl_context ctx,
   CLDeviceHandle device;
   int max_group_size;
 
-  ctx.lockstep_width = 0;
+  lockstep_width = 0;
 
-  opencl_device_option device_option = get_preferred_device(out ctx.cfg);
+  opencl_device_option device_option = get_preferred_device(out cfg);
 
-  if (ctx.cfg.debugging) {
+  if (cfg.debugging) {
     describe_device_option(device_option);
   }
 
-  ctx.device = device = device_option.device;
-  ctx.platform = platform = device_option.platform;
+  device = device = device_option.device;
+  platform = platform = device_option.platform;
 
   if (required_types & OPENCL_F64) {
     uint supported;
@@ -390,7 +387,7 @@ CLProgramHandle setup_opencl(out opencl_context ctx,
                                       NULL));
     if (supported == 0) {
       panic(1,
-            "Program uses double-precision floats, but this is not supported on chosen device: %s\n",
+            "Program uses double-precision floats, but this is not supported on chosen device: {0}\n",
             device_option.device_name);
     }
   }
@@ -403,50 +400,50 @@ CLProgramHandle setup_opencl(out opencl_context ctx,
 
   int max_tile_size = Math.Sqrt(max_group_size);
 
-  if (max_group_size < ctx.cfg.default_group_size) {
+  if (max_group_size < cfg.default_group_size) {
       Console.Error.WriteLine("Note: Device limits default group size to {0} (down from {1}).\n",
-                              max_group_size, ctx->cfg.default_group_size);
-    ctx->cfg.default_group_size = max_group_size;
+                              max_group_size, cfg.default_group_size);
+    cfg.default_group_size = max_group_size;
   }
 
-  if (max_tile_size < ctx.cfg.default_tile_size) {
+  if (max_tile_size < cfg.default_tile_size) {
       Console.Error.WriteLine("Note: Device limits default tile size to {0} (down from {1}).\n",
-                              max_tile_size, ctx.cfg.default_tile_size);
-    ctx.cfg.default_tile_size = max_tile_size;
+                              max_tile_size, cfg.default_tile_size);
+    cfg.default_tile_size = max_tile_size;
   }
 
-  ctx.max_group_size = max_group_size;
-  ctx.max_tile_size = max_tile_size; // No limit.
-  ctx.max_threshold = ctx->max_num_groups = 0; // No limit.
+  max_group_size = max_group_size;
+  max_tile_size = max_tile_size; // No limit.
+  max_threshold = max_num_groups = 0; // No limit.
 
   // Now we go through all the sizes, clamp them to the valid range,
   // or set them to the default.
-  for (int i = 0; i < ctx.cfg.num_sizes; i++) {
-    string size_class = ctx.cfg.size_classes[i];
-    int size_value = &ctx.cfg.size_values[i];
-    string size_name = ctx.cfg.size_names[i];
+  for (int i = 0; i < cfg.num_sizes; i++) {
+    string size_class = cfg.size_classes[i];
+    int size_value = cfg.size_values[i];
+    string size_name = cfg.size_names[i];
     int max_value, default_value;
     if (size_class == "group_size") {
       max_value = max_group_size;
-      default_value = ctx.cfg.default_group_size;
+      default_value = cfg.default_group_size;
     } else if (size_class == "num_groups") {
       max_value = max_group_size; // Futhark assumes this constraint.
-      default_value = ctx.cfg.default_num_groups;
+      default_value = cfg.default_num_groups;
     } else if (size_class == "tile_size"){
       max_value = Math.Sqrt(max_group_size);
-      default_value = ctx.cfg.default_tile_size;
+      default_value = cfg.default_tile_size;
     } else if (size_class == "threshold") {
       max_value = 0; // No limit.
-      default_value = ctx.cfg.default_threshold;
+      default_value = cfg.default_threshold;
     } else {
       panic(1, "Unknown size class for size '{0}': {1}\n", size_name, size_class);
     }
     if (size_value == 0) {
-      ctx.cfg.size_values[i] = default_value;
+      cfg.size_values[i] = default_value;
     } else if (max_value > 0 && size_value > max_value) {
         Console.Error.WriteLine("Note: Device limits {0} to {1} (down from {2})",
                                 size_name, max_value, size_value);
-      ctx.cfg.size_values[i] = default_value;
+      cfg.size_values[i] = default_value;
     }
   }
 
@@ -456,26 +453,26 @@ CLProgramHandle setup_opencl(out opencl_context ctx,
       IntPtr.Zero
   };
   // Note that nVidia's OpenCL requires the platform property
-  ctx.ctx = CL10.CreateContext(properties, 1, new []{device}, null, null, out error);
+  ctx = CL10.CreateContext(properties, 1, new []{device}, null, null, out error);
   assert(error == 0);
 
-  ctx.queue = CL10.CreateCommandQueue(ctx.ctx, new[]{device}, 0, out error);
+  queue = CL10.CreateCommandQueue(ctx, new[]{device}, 0, out error);
   assert(error == 0);
 
   // Make sure this function is defined.
-  post_opencl_setup(ctx, &device_option);
+  post_opencl_setup(&device_option);
 
-  if (ctx.cfg.debugging) {
-      Console.Error.WriteLine("Lockstep width: {0}\n", (int)ctx.lockstep_width);
-      Console.Error.WriteLine("Default group size: {0}\n", (int)ctx.cfg.default_group_size);
-      Console.Error.WriteLine("Default number of groups: {0}\n", (int)ctx.cfg.default_num_groups);
+  if (cfg.debugging) {
+      Console.Error.WriteLine("Lockstep width: {0}\n", (int)lockstep_width);
+      Console.Error.WriteLine("Default group size: {0}\n", (int)cfg.default_group_size);
+      Console.Error.WriteLine("Default number of groups: {0}\n", (int)cfg.default_num_groups);
   }
 
   string fut_opencl_src;
 
   // Maybe we have to read OpenCL source from somewhere else (used for debugging).
-  if (ctx.cfg.load_program_from != null) {
-      fut_opencl_src = File.ReadAllText(ctx.cfg.load_program_from);
+  if (cfg.load_program_from != null) {
+      fut_opencl_src = File.ReadAllText(cfg.load_program_from);
   } else {
       // Build the OpenCL program.  First we have to concatenate all the fragments.
       fut_opencl_src = string.Join("\n", srcs);
@@ -486,25 +483,23 @@ CLProgramHandle setup_opencl(out opencl_context ctx,
   string[] src_ptr = new[]{fut_opencl_src};
   IntPtr[] src_size = new []{IntrPtr.Zero};
 
-  if (ctx.cfg.dump_program_to != null) {
-      File.WriteAllText(ctx.cfg.dump_program_to, fut_opencl_src);
+  if (cfg.dump_program_to != null) {
+      File.WriteAllText(cfg.dump_program_to, fut_opencl_src);
   }
 
-  prog = CL10.CreateProgramWithSource(ctx.ctx, 1, src_ptr, src_size, &error);
+  prog = CL10.CreateProgramWithSource(ctx, 1, src_ptr, src_size, &error);
   assert(error == 0);
 
   int compile_opts_size = 1024;
-  for (int i = 0; i < ctx.cfg.num_sizes; i++) {
-    compile_opts_size += strlen(ctx->cfg.size_names[i]) + 20;
-  }
-  string compile_opts = String.Format("-DFUT_BLOCK_DIM={0} -DLOCKSTEP_WIDTH={1} ",
-                                      ctx.cfg.transpose_block_dim,
-                                      ctx.lockstep_width);
 
-  for (int i = 0; i < ctx->cfg.num_sizes; i++) {
+  string compile_opts = String.Format("-DFUT_BLOCK_DIM={0} -DLOCKSTEP_WIDTH={1} ",
+                                      cfg.transpose_block_dim,
+                                      lockstep_width);
+
+  for (int i = 0; i < cfg.num_sizes; i++) {
       compile_opts += String.Format("-D{0}={1} ",
-                                    ctx.cfg.size_names[i],
-                                    ctx.cfg.size_values[i]);
+                                    cfg.size_names[i],
+                                    cfg.size_values[i]);
   }
 
   OPENCL_SUCCEED(build_opencl_program(out prog, device, compile_opts));
