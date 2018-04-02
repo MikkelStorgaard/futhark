@@ -44,6 +44,7 @@ module Futhark.CodeGen.Backends.GenericCSharp
   , copyMemoryDefaultSpace
   , publicName
   , sizeOf
+  , funDef
   ) where
 
 import Control.Monad.Identity
@@ -190,12 +191,14 @@ newCompilerEnv (Imp.Functions funs) ops =
 data CompilerState s = CompilerState {
     compNameSrc :: VNameSource
   , compInit :: [CSStmt]
+  , compDebugItems :: [CSStmt]
   , compUserState :: s
 }
 
 newCompilerState :: VNameSource -> s -> CompilerState s
 newCompilerState src s = CompilerState { compNameSrc = src
                                        , compInit = []
+                                       , compDebugItems = []
                                        , compUserState = s }
 
 newtype CompilerM op s a = CompilerM (RWS (CompilerEnv op s) [CSStmt] (CompilerState s) a)
@@ -231,6 +234,10 @@ stm x = tell [x]
 stms :: [CSStmt] -> CompilerM op s ()
 stms = mapM_ stm
 
+debugReport :: CSStmt -> CompilerM op s ()
+debugReport x = modify $ \s ->
+  s { compDebugItems = compDebugItems s ++ [x] }
+
 futharkFun :: String -> String
 futharkFun s = "futhark_" ++ zEncodeString s
 
@@ -245,14 +252,6 @@ compileOutput :: Imp.Param -> (CSExp, CSType)
 compileOutput = nameFun &&& typeFun
   where nameFun = Var . compileName . Imp.paramName
         typeFun = compileType . paramType
-
---runCompilerM :: Imp.Functions op -> Operations op s
---             -> VNameSource
---             -> s
---             -> CompilerM op s a
---             -> a
---runCompilerM prog ops src userstate (CompilerM m) =
---  fst $ evalRWS m (newCompilerEnv prog ops) (newCompilerState src userstate)
 
 getDefaultDecl :: Imp.Param -> CSStmt
 getDefaultDecl (Imp.MemParam v _) =
@@ -299,12 +298,6 @@ standardOptions = [
          , optionArgument = RequiredArgument
          , optionAction =
            [ Reassign (Var "entry_point") $ Var "optarg" ]
-         },
-  -- The -b option is just a dummy for now.
-  Option { optionLongName = "binary-output"
-         , optionShortName = Just 'b'
-         , optionArgument = NoArgument
-         , optionAction = [Pass]
          }
   ]
 
@@ -326,13 +319,14 @@ compileProg :: MonadFreshNames m =>
             -> Constructor
             -> [CSStmt]
             -> [CSStmt]
+            -> [CSStmt]
             -> Operations op s
             -> s
             -> [CSStmt]
             -> [Option]
             -> Imp.Functions op
             -> m String
-compileProg module_name constructor imports defines ops userstate pre_timing options prog@(Imp.Functions funs) = do
+compileProg module_name constructor imports ending defines ops userstate pre_timing options prog@(Imp.Functions funs) = do
   src <- getNameSource
   let prog' = runCompilerM prog ops src userstate compileProg'
   return $ pretty (CSProg $
@@ -363,7 +357,8 @@ compileProg module_name constructor imports defines ops userstate pre_timing opt
                          member_decls ++
                          [PublicFunDef $ Def "internal_entry" VoidT [(string_arrayT, "args")] $
                            parse_options ++ selectEntryPoint entry_point_names entry_points]) :
-                     [ClassDef $ Class "Program" [StaticFunDef $ Def "Main" VoidT [(string_arrayT,"args")] main_entry]])
+                     [ClassDef $ Class "Program"
+                       [StaticFunDef $ Def "Main" VoidT [(string_arrayT,"args")] main_entry]])
 
 
         string_arrayT = Composite $ ArrayT $ Primitive StringT
@@ -396,7 +391,8 @@ compileProg module_name constructor imports defines ops userstate pre_timing opt
               , Exp $ simpleCall "Environment.Exit" [Integer 1]]
               [ Assign (Var "entry_point_fun") $
                   Index (Var "entry_points") (IdxExp $ Var "entry_point")
-              , Exp $ simpleCall "entry_point_fun.Invoke" []]]
+              , Exp $ simpleCall "entry_point_fun.Invoke" []]
+          ]
 
 
 compileFunc :: (Name, Imp.Function op) -> CompilerM op s CSFunDef
@@ -573,12 +569,27 @@ extName = (++"_ext")
 sizeOf :: CSType -> CSExp
 sizeOf t = simpleCall "sizeOf" [(Var . pretty) t]
 
+funDef :: String -> CSType -> [(CSType, String)] -> [CSStmt] -> CSStmt
+funDef s t args stmts = FunDef $ Def s t args stmts
+
 valueDescName :: Imp.ValueDesc -> String
 valueDescName = compileName . valueDescVName
 
 valueDescVName :: Imp.ValueDesc -> VName
 valueDescVName (Imp.ScalarValue _ _ vname) = vname
 valueDescVName (Imp.ArrayValue vname _ _ _ _ _) = vname
+
+consoleWrite :: String -> [CSExp] -> CSExp
+consoleWrite str exps = simpleCall "Console.Write" $ String str:exps
+
+consoleWriteLine :: String -> [CSExp] -> CSExp
+consoleWriteLine str exps = simpleCall "Console.WriteLine" $ String str:exps
+
+consoleErrorWrite :: String -> [CSExp] -> CSExp
+consoleErrorWrite str exps = simpleCall "Console.Error.Write" $ String str:exps
+
+consoleErrorWriteLine :: String -> [CSExp] -> CSExp
+consoleErrorWriteLine str exps = simpleCall "Console.Error.WriteLine" $ String str:exps
 
 readFun :: PrimType -> Imp.Signedness -> String
 readFun (FloatType Float32) _ = "read_f32"

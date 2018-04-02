@@ -35,6 +35,7 @@ compileProg module_name =
                   , Using Nothing "static System.Convert"
                   , Using Nothing "static System.Math"
                   , Using Nothing "Mono.Options"
+                  , Using Nothing "Cloo"
                   ]
         defines = [ Escape csScalar, Escape csMemory
                   , Escape csExceptions, Escape csReader]

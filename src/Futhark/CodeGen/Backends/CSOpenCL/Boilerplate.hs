@@ -1,5 +1,3 @@
-{-# LANGUAGE QuasiQuotes #-}
-{-# LANGUAGE TemplateHaskell #-}
 module Futhark.CodeGen.Backends.CSOpenCL.Boilerplate
   ( generateBoilerplate
 
@@ -7,19 +5,19 @@ module Futhark.CodeGen.Backends.CSOpenCL.Boilerplate
   , kernelRuns
   ) where
 
-import Data.FileEmbed
 import qualified Data.Map as M
-import qualified Language.C.Syntax as C
-import qualified Language.C.Quote.OpenCL as C
 
 import Futhark.CodeGen.ImpCode.OpenCL hiding (Index, If)
 import qualified Futhark.CodeGen.Backends.GenericCSharp as CS
 import Futhark.CodeGen.Backends.GenericCSharp.AST as AST
 import Futhark.CodeGen.OpenCL.Kernels
-import Futhark.Util (chunk)
-import NeatInterpolation
-import Data.Text (intercalate, Text)
 
+
+intT, stringT, intArrayT, stringArrayT :: CSType
+intT = Primitive $ CSInt Int32T
+stringT = Primitive StringT
+intArrayT = Composite $ ArrayT intT
+stringArrayT = Composite $ ArrayT stringT
 
 generateBoilerplate :: String -> String -> [String] -> [PrimType]
                     -> M.Map VName SizeClass
@@ -32,21 +30,12 @@ generateBoilerplate opencl_code opencl_prelude kernel_names types sizes = do
 
   CS.atInit top_decls
 
-  let intT = Primitive $ CSInt Int32T
-  let stringT = Primitive StringT
-  let arrayT = Composite ArrayT
-  let int_arrayT = arrayT intT
-  let string_arrayT = arrayT stringT
-
-  let funDef s t args stmts = FunDef $ Def s t args stmts
 
 
-
-
-  CS.stm $ AssignTyped string_arrayT (Var "size_names")
+  CS.stm $ AssignTyped stringArrayT (Var "size_names")
     (Just $ Collection "[]" (map (String . pretty) $ M.keys sizes))
 
-  CS.stm $ AssignTyped string_arrayT (Var "size_classes")
+  CS.stm $ AssignTyped stringArrayT (Var "size_classes")
     (Just $ Collection "[]" (map (String . pretty) $ M.elems sizes))
 
 
@@ -55,17 +44,16 @@ generateBoilerplate opencl_code opencl_prelude kernel_names types sizes = do
   let get_size_class = CS.publicName "get_size_class"
 
 
-  CS.stm $ funDef get_num_sizes intT [("i", intT)]
+  CS.stm $ CS.funDef get_num_sizes intT [(intT, "i")]
     [ Return $ (Integer . toInteger) $ M.size sizes ]
-  CS.stm $ funDef get_size_name (Primitive StringT) [("i", intT)]
+  CS.stm $ CS.funDef get_size_name (Primitive StringT) [(intT, "i")]
     [ Return $ Index (Var "size_names") (IdxExp $ Var "i") ]
 
-  CS.stm $ funDef get_size_class (Primitive StringT) [("i", intT)]
+  CS.stm $ CS.funDef get_size_class (Primitive StringT) [(intT, "i")]
     [ Return $ Index (Var "size_classes") (IdxExp $ Var "i") ]
 
   let cfg = CS.publicName "context_config"
   let new_cfg = CS.publicName "context_config_new"
-  let free_cfg = CS.publicName "context_config_free"
   let cfg_set_debugging = CS.publicName "context_config_set_debugging"
   let cfg_set_device = CS.publicName "context_config_set_device"
   let cfg_set_platform = CS.publicName "context_config_set_platform"
@@ -77,12 +65,11 @@ generateBoilerplate opencl_code opencl_prelude kernel_names types sizes = do
   let cfg_set_default_threshold = CS.publicName "context_config_set_default_threshold"
   let cfg_set_size = CS.publicName "context_config_set_size"
 
-
   CS.stm $ StructDef "sizes" (map (\k -> (intT, pretty k)) $ M.keys sizes)
   CS.stm $ StructDef cfg [ (CustomT "opencl_config", "opencl")
-                         , (int_arrayT, "sizes")]
+                         , (intArrayT, "sizes")]
 
-  CS.stm $ funDef new_cfg (CustomT cfg) []
+  CS.stm $ CS.funDef new_cfg (CustomT cfg) []
     [ Assign (Var "cfg") $ CS.simpleInitClass cfg []
     , If (BinOp "==" (Var "cfg") Null) [Return Null][]
     , Reassign (Var "cfg.sizes") (Collection "int[]" (replicate (M.size sizes-1) (Integer 0)))
@@ -92,69 +79,66 @@ generateBoilerplate opencl_code opencl_prelude kernel_names types sizes = do
     , Return (Var cfg)
     ]
 
-  CS.stm $ funDef cfg_set_debugging VoidT [(OutT $ CustomT cfg, "cfg"),(Primitive BoolT, "flag")]
+  CS.stm $ CS.funDef cfg_set_debugging VoidT [(OutT $ CustomT cfg, "cfg"),(Primitive BoolT, "flag")]
     [Reassign (Var "cfg.opencl.debugging") (Var "flag")]
 
-  CS.stm $ funDef cfg_set_device VoidT [(OutT $ CustomT cfg, "cfg"),(stringT, "s")]
+  CS.stm $ CS.funDef cfg_set_device VoidT [(OutT $ CustomT cfg, "cfg"),(stringT, "s")]
     [Exp $ CS.simpleCall "set_preferred_device" [Out $ Var "cfg.opencl", Var "s"]]
 
-  CS.stm $ funDef cfg_set_platform VoidT [(OutT $ CustomT cfg, "cfg"),(stringT, "s")]
+  CS.stm $ CS.funDef cfg_set_platform VoidT [(OutT $ CustomT cfg, "cfg"),(stringT, "s")]
     [Exp $ CS.simpleCall "set_preferred_platform" [Out $ Var "cfg.opencl", Var "s"]]
 
-  CS.stm $ funDef cfg_dump_program_to VoidT [(OutT $ CustomT cfg, "cfg"),(stringT, "path")]
+  CS.stm $ CS.funDef cfg_dump_program_to VoidT [(OutT $ CustomT cfg, "cfg"),(stringT, "path")]
     [Reassign (Var "cfg.opencl.dump_program_to") (Var "path")]
 
-  CS.stm $ funDef cfg_load_program_from VoidT [(OutT $ CustomT cfg, "cfg"),(stringT, "path")]
+  CS.stm $ CS.funDef cfg_load_program_from VoidT [(OutT $ CustomT cfg, "cfg"),(stringT, "path")]
     [Reassign (Var "cfg.opencl.load_program_from") (Var "path")]
 
-  CS.stm $ funDef cfg_set_default_group_size VoidT [(OutT $ CustomT cfg, "cfg"),(intT, "size")]
+  CS.stm $ CS.funDef cfg_set_default_group_size VoidT [(OutT $ CustomT cfg, "cfg"),(intT, "size")]
     [Reassign (Var "cfg.opencl.default_group_size") (Var "size")]
 
-  CS.stm $ funDef cfg_set_default_num_groups VoidT [(OutT $ CustomT cfg, "cfg"),(intT, "num")]
+  CS.stm $ CS.funDef cfg_set_default_num_groups VoidT [(OutT $ CustomT cfg, "cfg"),(intT, "num")]
     [Reassign (Var "cfg.opencl.default_num_groups") (Var "num")]
 
 
-  CS.stm $ funDef cfg_set_default_tile_size VoidT [(OutT $ CustomT cfg, "cfg"),(intT, "size")]
+  CS.stm $ CS.funDef cfg_set_default_tile_size VoidT [(OutT $ CustomT cfg, "cfg"),(intT, "size")]
     [Reassign (Var "cfg.opencl.default_tile_size") (Var "size")]
 
-  CS.stm $ funDef cfg_set_default_threshold VoidT [(OutT $ CustomT cfg, "cfg"),(intT, "size")]
+  CS.stm $ CS.funDef cfg_set_default_threshold VoidT [(OutT $ CustomT cfg, "cfg"),(intT, "size")]
     [Reassign (Var "cfg.opencl.default_threshold") (Var "size")]
 
-  CS.stm $ funDef cfg_set_size (Primitive BoolT) [(OutT $ CustomT cfg, "cfg")
+  CS.stm $ CS.funDef cfg_set_size (Primitive BoolT) [(OutT $ CustomT cfg, "cfg")
                                                  ,(stringT, "size_name")
-                                                 ,(intT, "size")]
-    [ AST.For "i" (Integer $ M.size sizes)
+                                                 ,(intT, "size_value")]
+    [ AST.For "i" ((Integer . toInteger) $ M.size sizes)
       [ If (BinOp "==" (Var "size_name") (Index (Var "size_names") (IdxExp (Var "i"))))
-          [ Reassign (Index (Var "cfg.sizes") (IdxExp (Var "i")))
+          [ Reassign (Index (Var "cfg.sizes") (IdxExp (Var "i"))) (Var "size_value")
           , Return (AST.Bool True)] []
       , Return $ AST.Bool False]]
 
   let ctx = CS.publicName "context"
   let new_ctx = CS.publicName "context_new"
-  let free_ctx = CS.publicName "context_free"
   let sync_ctx = CS.publicName "context_sync"
-  let clear_caches_ctx = CS.publicName "context_clear_caches"
 
 --  (fields, init_fields) <- GC.contextContents
 
   CS.stm $ StructDef ctx $
-    [(intT "detail_memory")
-     (Primitive BoolT,  "debugging")
-     (CustomT "opencl_context", "opencl")
-     (CustomT "sizes", "sizes")
-    ] ++ ctx_opencl_fields
+    [(intT, "detail_memory")
+    , (Primitive BoolT,  "debugging")
+    , (CustomT "opencl_context", "opencl")
+    , (CustomT "sizes", "sizes") ]
+    ++ ctx_opencl_fields
 
   mapM_ CS.stm later_top_decls
 
-  let set_required_types = if FloatType Float64 `elem` types then
-                             [Reassign (Var "required_types") (Var "OPENCL_F64")]
-                           else
-                             []
-      set_sizes = zipWith (\i k -> Reassign (Field (Var "ctx.sizes") (Integer k))
-                                            (Index (Var "cfg.sizes") (Integer i)))
+  let set_required_types = [Reassign (Var "required_types") (Var "OPENCL_F64")
+                           | FloatType Float64 `elem` types]
+
+      set_sizes = zipWith (\i k -> Reassign (Field (Var "ctx.sizes") (show k))
+                                            (Index (Var "cfg.sizes") (IdxExp $ (Integer . toInteger) i)))
                           [(0::Int)..] $ M.keys sizes
 
-  CS.stm $ funDef new_ctx (CustomT ctx) [(CustomT cfg, "cfg")]
+  CS.stm $ CS.funDef new_ctx (CustomT ctx) [(CustomT cfg, "cfg")] $
     [ Assign (Var "ctx") $ CS.simpleInitClass ctx []
     , If (BinOp "==" (Var "ctx") Null) [Return Null][]
     , Reassign (Var "ctx.detail_memory") (Var "cfg.opencl.debugging")
@@ -168,55 +152,51 @@ generateBoilerplate opencl_code opencl_prelude kernel_names types sizes = do
         (Just $ CS.simpleCall "setup_opencl" [ Out $ Var "ctx.opencl"
                                              , Var "opencl_program"
                                              , Var "required_types"])]
-    ++ map (loadKernelByName) kernel_names
+    ++ concatMap loadKernelByName kernel_names
     ++ final_inits
     ++ set_sizes
-    : [Return $ Var "ctx"]
+    ++ [Return $ Var "ctx"]
 
-  CS.stm $ funDef intT sync_ctx [(CustomT ctx, "ctx")]
-    [ CS.simpleCall "OPENCL_SUCCEED" [simpleCall "CL10.Finish" [Var "ctx.opencl.queue"]]
+  CS.stm $ CS.funDef sync_ctx intT [(CustomT ctx, "ctx")]
+    [Exp $ CS.simpleCall "OPENCL_SUCCEED" [CS.simpleCall "CL10.Finish" [Var "ctx.opencl.queue"]]
     , Return $ Integer 0 ]
-  --mapM_ CS.debugReport $ openClReport kernel_names
+
+  mapM_ CS.debugReport $ openClReport kernel_names
 
 
 openClDecls :: [String] -> String -> String
-            -> ([C.FieldGroup], [C.Stm], [C.Definition], [C.Definition])
+            -> ([(CSType, String)], [CSStmt], CSStmt, [CSStmt])
 openClDecls kernel_names opencl_program opencl_prelude =
   (ctx_fields, ctx_inits, openCL_boilerplate, openCL_load)
-  where opencl_program_fragments = []
-          -- Some C compilers limit the size of literal strings, so
-          -- chunk the entire program into small bits here, and
-          -- concatenate it again at runtime.
-
-        ctx_fields =
+  where ctx_fields =
           [ (intT, "total_runs")
           , (Primitive $ CSInt Int64T, "total_runtime")]
-          ++ concat $ map (\name -> [(CustomT "CLKernelHandle", name),
-                                     (intT, kernelRuntime name),
-                                     (intT, kernelRuns name)]) kernel_names
+          ++ concatMap (\name -> [(CustomT "CLKernelHandle", name)
+                                 ,(intT, kernelRuntime name)
+                                 ,(intT, kernelRuns name)]) kernel_names
 
         ctx_inits =
           [ Reassign (Var "ctx.total_runs") (Integer 0)
           , Reassign (Var "ctx.total_runtime") (Integer 0) ]
-          ++ concat $ map (\name -> [ Reassign (Field (Var ctx) (kernelRuntime name)) (Integer 0)
-                                    , Reassign (Field (Var ctx) (kernelRuns name)) (Integer 0)]
-                          ) kernel_names
+          ++ concatMap (\name -> [ Reassign (Field (Var "ctx") (kernelRuntime name)) (Integer 0)
+                            , Reassign (Field (Var "ctx") (kernelRuns name)) (Integer 0)]
+                  ) kernel_names
 
-        openCL_load = funDef VoidT "post_opencl_setup"
+        openCL_load = [CS.funDef "post_opencl_setup" VoidT
             [(OutT $ CustomT "opencl_context", "ctx")
-            ,(OutT $ CustomT "opencl_device_option", "option")] $ map sizeHeuristicsCode sizeHeuristicsTable
+            ,(OutT $ CustomT "opencl_device_option", "option")] $ map sizeHeuristicsCode sizeHeuristicsTable]
 
         openCL_boilerplate =
-          [ AssignTyped string_arrayT "opencl_program" (Just $ Collection "string[]"
-                                                        [String $ opencl_prelude ++ opencl_program])]
+          AssignTyped stringArrayT (Var "opencl_program")
+              (Just $ Collection "string[]" [String $ opencl_prelude ++ opencl_program])
 
-loadKernelByName :: String -> C.Stm
+loadKernelByName :: String -> [CSStmt]
 loadKernelByName name =
   [ Reassign (Field (Var "ctx") name)
-      (simpleCall "CL10.CreateKernel" [Var "prog", String name, Out $ Var "error"])
-  , AST.Assert (Var "error") (Integer 0)
+      (CS.simpleCall "CL10.CreateKernel" [Var "prog", String name, Out $ Var "error"])
+  , AST.Assert (BinOp "==" (Var "error") (Integer 0)) ""
   , If (Var "ctx.debugging")
-      [simpleCall "Console.Error.WriteLine" [String "Created kernel {0}", Var "name"]]
+      [Exp $ CS.simpleCall "Console.Error.WriteLine" [String "Created kernel {0}", Var "name"]]
       []
   ]
 
@@ -226,7 +206,7 @@ kernelRuntime = (++"_total_runtime")
 kernelRuns :: String -> String
 kernelRuns = (++"_runs")
 
-openClReport :: [String] -> [C.BlockItem]
+openClReport :: [String] -> [CSStmt]
 openClReport names = report_kernels ++ [report_total]
   where longest_name = foldl max 0 $ map length names
         report_kernels = concatMap reportKernel names
@@ -238,7 +218,7 @@ openClReport names = report_kernels ++ [report_total]
         reportKernel name =
           let runs = kernelRuns name
               total_runtime = kernelRuntime name
-          in [CS.simpleCall "System.Error.WriteLine"
+          in [Exp $ CS.simpleCall "System.Error.WriteLine"
                [ String $ format_string name
                , Field (Var "ctx") runs
                , Ternary (BinOp "!="
@@ -247,19 +227,18 @@ openClReport names = report_kernels ++ [report_total]
                              (Field (Var "ctx") runs))
                            (Integer 0))
                  (Field (Var "ctx") runs) (Integer 1)
-               , Cast (Primitive $ CSInt Int64T) $ Field (Var "ctx") total_runtime]
-             , AssignOp "+" (Var "ctx.total_runtime") (Field (Var "ctx") total_runtime)
-             , AssignOp "+" (Var "ctx.total_runs") (Field (Var "ctx") total_runs)
+               , Cast (Primitive $ CSInt Int64T) $ Field (Var "ctx") "total_runtime"]
+             , AssignOp "+" (Var "ctx.total_runtime") (Field (Var "ctx") "total_runtime")
+             , AssignOp "+" (Var "ctx.total_runs") (Field (Var "ctx") "total_runs")
              ]
 
         ran_text = "Ran {0} kernels with cumulative runtime: {1:0.000000}"
-        report_total = [If (Var "ctx.debugging")
+        report_total = If (Var "ctx.debugging")
                           [Exp $ CS.simpleCall "Console.Error.WriteLine" [ String ran_text
                                                                          , Field (Var "ctx") "total_runs"
                                                                          , Field (Var "ctx") "total_runtime"
                                                                          ]
                           ] []
-                       ]
 
 sizeHeuristicsCode :: SizeHeuristic -> CSStmt
 sizeHeuristicsCode (SizeHeuristic platform_name device_type which what) =

@@ -148,10 +148,46 @@ launchKernel kernel_name kernel_dims workgroup_dims args = do
   args_stms <- mapM (processKernelArg kernel_name') (zip [0..] args)
 
   CS.stm $ Unsafe $ concat arg_stms
-  CS.stm $ Exp $ CS.simpleCall "CL10.EnqueueNDRangeKernel"
-    [Var "queue", Var kernel_name', kernel_dims', workgroup_dims]
+
+  global_work_size <- newVName "global_work_size"
+  local_work_size <- newVName "local_work_size"
+  stop_watch <- newVName "stop_watch"
+  time_diff <- newVName "time_diff"
+
+  CS.stm $ If (BinOp "!=" total_elements (Integer 0))
+    [ Assign (Var global_work_size) (Collection "int[]" kernel_dims)
+    , Assign (Var local_work_size) (Collection "int[]" workgroup_dims)
+    , Assign (Var stop_watch) $ simpleInitClass "Stopwatch" []
+    , If (Var "debugging") [debugStartStmts] []
+    ]
+    ++
+    [ Exp $ CS.simpleCall "OPENCL_SUCCEED" [
+        CS.simpleCall "CL10.EnqueueNDRangeKernel"
+          [Var "queue", Var kernel_name', kernel_dims', workgroup_dims]]]
+    ++
+    [ If (Var "debugging") debugEndStmts [] ]
   finishIfSynchronous
-  where processKernelArg :: String
+
+  where debugStartStmts =
+          map Exp [ consoleErrorWrite "Launching {0} with global work size [" [String kernel_name]
+                  , printKernelSize global_work_size
+                  , consoleErrorWrite "] and local work size [" []
+                  , printKernelSize local_work_size
+                  , consoleErrorWrite "].\n" []
+                  , callMethod (Var stop_watch) "Start" []
+                  ]
+        debugEndStmts =
+          [ Exp $ CS.simpleCall "OPENCL_SUCCEED" [
+              CS.simpleCall "CL10.Finish"
+                [Var "queue"]]
+          , Exp $ callMethod (Var stop_watch) "Stop" []
+          , Assign (Var time_diff) (Field (Var stop_watch) "ElapsedMilliseconds")
+          , AssignOp "+" (Var kernelRuntime kernel_name) (Field (Var stop_watch) "ElapsedMilliseconds")
+          , AssignOp "+" (Var kernelRuns kernel_name) (Integer 1)
+          , Exp $ consoleErrorWriteLine "kernel {0} runtime: {1}" [String kernel_name, Var time_diff]
+          ]
+
+        processKernelArg :: String
                          -> Imp.KernelArg
                          -> Integer
                          -> CS.CompilerM op s [CSStmt]
@@ -169,13 +205,22 @@ launchKernel kernel_name kernel_dims workgroup_dims args = do
           num_bytes' <- CS.compileExp num_bytes
           return [ Exp $ getKernelCall kernel argnum num_bytes' Null ]
 
+        kernel_rank = length kernel_dims
+        total_elements = foldl (BinOp "*") (Integer 1) kernel_dims
+
+        printKernelSize :: VName -> [C.Stm]
+        printKernelSize work_size =
+          intercalate [consoleErrorWrite ", " []]
+          map (printKernelDim work_size) [0..kernel_rank-1]
+
+        printKernelDim global_work_size i =
+          consoleErrorWrite "{0}" [Index (Var global_work_size) (IdxExp (Integer i))]
+
+
+
 getKernelCall :: String -> Integer -> CSExp -> CSExp -> CSExp
 getKernelCall kernel arg_num size e =
   simpleCall "CL10.SetKernelArg" [ Var kernel, Integer arg_num, size, Ref e]
-
-sizeOf :: CSType -> CSExp
-sizeOf t = simpleCall "sizeOf" [Var $ ppr t]
-
 
 castToIntPtr :: CSExp -> CSExp
 castToIntPtr e = Cast e "IntPtr"
