@@ -1,27 +1,39 @@
 // Stub code for OpenCL setup.
 
+void OPENCL_SUCCEED(int return_code,
+                    [CallerFilePath] string filePath = "",
+                    [CallerLineNumber] int lineNumber = 0)
+{
+    opencl_succeed(return_code, "", filePath, lineNumber);
+}
 
-#define OPENCL_SUCCEED(e) opencl_succeed(e, #e, __FILE__, __LINE__)
+void OPENCL_SUCCEED(ComputeErrorCode return_code,
+                    [CallerFilePath] string filePath = "",
+                    [CallerLineNumber] int lineNumber = 0)
+{
+    opencl_succeed((int) return_code, "", filePath, lineNumber);
+}
+
 struct opencl_config
 {
-    int debugging;
-    int preferred_device_num;
-    string preferred_platform;
-    string preferred_device;
+    public int debugging;
+    public int preferred_device_num;
+    public string preferred_platform;
+    public string preferred_device;
 
-    string dump_program_to;
-    string load_program_from;
+    public string dump_program_to;
+    public string load_program_from;
 
-    int default_group_size;
-    int default_num_groups;
-    int default_tile_size;
-    int default_threshold;
-    int transpose_block_dim;
+    public int default_group_size;
+    public int default_num_groups;
+    public int default_tile_size;
+    public int default_threshold;
+    public int transpose_block_dim;
 
-    int num_sizes;
-    string[] size_names;
-    int[] size_values;
-    string[] size_classes;
+    public int num_sizes;
+    public string[] size_names;
+    public int[] size_values;
+    public string[] size_classes;
 }
 
 void opencl_config_init(out opencl_config cfg,
@@ -34,8 +46,8 @@ void opencl_config_init(out opencl_config cfg,
     cfg.preferred_device_num = 0;
     cfg.preferred_platform = "";
     cfg.preferred_device = "";
-    cfg.dump_program_to = NULL;
-    cfg.load_program_from = NULL;
+    cfg.dump_program_to = null;
+    cfg.load_program_from = null;
 
     cfg.default_group_size = 256;
     cfg.default_num_groups = 128;
@@ -64,11 +76,11 @@ int max_threshold;
 int lockstep_width;
 
 struct opencl_device_option {
-  CLPlatformHandle platform;
-  CLDeviceHandle device;
-  ComputeDeviceTypes device_type;
-  string platform_name;
-  string device_name;
+  public CLPlatformHandle platform;
+  public CLDeviceHandle device;
+  public ComputeDeviceTypes device_type;
+  public string platform_name;
+  public string device_name;
 };
 
 /* This function must be defined by the user.  It is invoked by
@@ -76,55 +88,55 @@ struct opencl_device_option {
    before the program is loaded.  Its intended use is to tune
    constants based on the selected platform and device. */
 
-string opencl_error_string(uint err)
+string opencl_error_string(int err)
 {
-    switch (err) {
-        case Success:                                        return "Success!";
-        case DeviceNotFound:                                 return "Device not found.";
-        case DeviceNotAvailable:                             return "Device not available";
-        case CompilerNotAvailable:                           return "Compiler not available";
-        case MemoryObjectAllocationFailure:                  return "Memory object allocation failure";
-        case OutOfResources:                                 return "Out of resources";
-        case OutOfHostMemory:                                return "Out of host memory";
-        case ProfilingInfoNotAvailable:                      return "Profiling information not available";
-        case MemoryCopyOverlap:                              return "Memory copy overlap";
-        case ImageFormatMismatch:                            return "Image format mismatch";
-        case ImageFormatNotSupported:                        return "Image format not supported";
-        case BuildProgramFailure:                            return "Program build failure";
-        case MapFailure:                                     return "Map failure";
-        case InvalidValue:                                   return "Invalid value";
-        case InvalidDevicetype:                              return "Invalid device type";
-        case InvalidPlatform:                                return "Invalid platform";
-        case InvalidDevice:                                  return "Invalid device";
-        case InvalidContext:                                 return "Invalid context";
-        case InvalidCommandQueueFlags:                       return "Invalid queue properties";
-        case InvalidCommandQueue:                            return "Invalid command queue";
-        case InvalidHostPointer:                             return "Invalid host pointer";
-        case InvalidMemoryObject:                            return "Invalid memory object";
-        case InvalidImageFormatDescriptor:                   return "Invalid image format descriptor";
-        case InvalidImageSize:                               return "Invalid image size";
-        case InvalidSampler:                                 return "Invalid sampler";
-        case InvalidBinary:                                  return "Invalid binary";
-        case InvalidBuildOptions:                            return "Invalid build options";
-        case InvalidProgram:                                 return "Invalid program";
-        case InvalidProgramExecutable:                       return "Invalid program executable";
-        case InvalidKernelName:                              return "Invalid kernel name";
-        case InvalidKernelDefinition:                        return "Invalid kernel definition";
-        case InvalidKernel:                                  return "Invalid kernel";
-        case InvalidArgumentIndex:                           return "Invalid argument index";
-        case InvalidArgumentValue:                           return "Invalid argument value";
-        case InvalidArgumentSize:                            return "Invalid argument size";
-        case InvalidKernelArguments:                         return "Invalid kernel arguments";
-        case InvalidWorkDimension:                           return "Invalid work dimension";
-        case InvalidWorkGroupSize:                           return "Invalid work group size";
-        case InvalidWorkItemSize:                            return "Invalid work item size";
-        case InvalidGlobalOffset:                            return "Invalid global offset";
-        case InvalidEventWaitList:                           return "Invalid event wait list";
-        case InvalidEvent:                                   return "Invalid event";
-        case InvalidOperation:                               return "Invalid operation";
-        case InvalidGLObject:                                return "Invalid OpenGL object";
-        case InvalidBufferSize:                              return "Invalid buffer size";
-        case InvalidMipLevel:                                return "Invalid mip-map level";
+    switch ((ComputeErrorCode) err) {
+        case ComputeErrorCode.Success:                                        return "Success!";
+        case ComputeErrorCode.DeviceNotFound:                                 return "Device not found.";
+        case ComputeErrorCode.DeviceNotAvailable:                             return "Device not available";
+        case ComputeErrorCode.CompilerNotAvailable:                           return "Compiler not available";
+        case ComputeErrorCode.MemoryObjectAllocationFailure:                  return "Memory object allocation failure";
+        case ComputeErrorCode.OutOfResources:                                 return "Out of resources";
+        case ComputeErrorCode.OutOfHostMemory:                                return "Out of host memory";
+        case ComputeErrorCode.ProfilingInfoNotAvailable:                      return "Profiling information not available";
+        case ComputeErrorCode.MemoryCopyOverlap:                              return "Memory copy overlap";
+        case ComputeErrorCode.ImageFormatMismatch:                            return "Image format mismatch";
+        case ComputeErrorCode.ImageFormatNotSupported:                        return "Image format not supported";
+        case ComputeErrorCode.BuildProgramFailure:                            return "Program build failure";
+        case ComputeErrorCode.MapFailure:                                     return "Map failure";
+        case ComputeErrorCode.InvalidValue:                                   return "Invalid value";
+        case ComputeErrorCode.InvalidDeviceType:                              return "Invalid device type";
+        case ComputeErrorCode.InvalidPlatform:                                return "Invalid platform";
+        case ComputeErrorCode.InvalidDevice:                                  return "Invalid device";
+        case ComputeErrorCode.InvalidContext:                                 return "Invalid context";
+        case ComputeErrorCode.InvalidCommandQueueFlags:                       return "Invalid queue properties";
+        case ComputeErrorCode.InvalidCommandQueue:                            return "Invalid command queue";
+        case ComputeErrorCode.InvalidHostPointer:                             return "Invalid host pointer";
+        case ComputeErrorCode.InvalidMemoryObject:                            return "Invalid memory object";
+        case ComputeErrorCode.InvalidImageFormatDescriptor:                   return "Invalid image format descriptor";
+        case ComputeErrorCode.InvalidImageSize:                               return "Invalid image size";
+        case ComputeErrorCode.InvalidSampler:                                 return "Invalid sampler";
+        case ComputeErrorCode.InvalidBinary:                                  return "Invalid binary";
+        case ComputeErrorCode.InvalidBuildOptions:                            return "Invalid build options";
+        case ComputeErrorCode.InvalidProgram:                                 return "Invalid program";
+        case ComputeErrorCode.InvalidProgramExecutable:                       return "Invalid program executable";
+        case ComputeErrorCode.InvalidKernelName:                              return "Invalid kernel name";
+        case ComputeErrorCode.InvalidKernelDefinition:                        return "Invalid kernel definition";
+        case ComputeErrorCode.InvalidKernel:                                  return "Invalid kernel";
+        case ComputeErrorCode.InvalidArgumentIndex:                           return "Invalid argument index";
+        case ComputeErrorCode.InvalidArgumentValue:                           return "Invalid argument value";
+        case ComputeErrorCode.InvalidArgumentSize:                            return "Invalid argument size";
+        case ComputeErrorCode.InvalidKernelArguments:                         return "Invalid kernel arguments";
+        case ComputeErrorCode.InvalidWorkDimension:                           return "Invalid work dimension";
+        case ComputeErrorCode.InvalidWorkGroupSize:                           return "Invalid work group size";
+        case ComputeErrorCode.InvalidWorkItemSize:                            return "Invalid work item size";
+        case ComputeErrorCode.InvalidGlobalOffset:                            return "Invalid global offset";
+        case ComputeErrorCode.InvalidEventWaitList:                           return "Invalid event wait list";
+        case ComputeErrorCode.InvalidEvent:                                   return "Invalid event";
+        case ComputeErrorCode.InvalidOperation:                               return "Invalid operation";
+        case ComputeErrorCode.InvalidGLObject:                                return "Invalid OpenGL object";
+        case ComputeErrorCode.InvalidBufferSize:                              return "Invalid buffer size";
+        case ComputeErrorCode.InvalidMipLevel:                                return "Invalid mip-map level";
         default:                                             return "Unknown";
     }
 }
@@ -132,8 +144,10 @@ string opencl_error_string(uint err)
 void opencl_succeed(int ret,
                     string call,
                     string file,
-                    int line) {
-  if (ret != CL_SUCCESS) {
+                    int line)
+{
+  if (ret != (int) ComputeErrorCode.Success)
+  {
     panic(-1, "{0}:{1}: OpenCL call\n  {2}\nfailed with error code {3} ({4})\n",
           file, line, call, ret, opencl_error_string(ret));
   }
@@ -162,38 +176,40 @@ void set_preferred_device(out opencl_config cfg, string s)
 }
 
 string opencl_platform_info(CLPlatformHandle platform,
-                            CompuePlatformInfo param) {
+                            ComputePlatformInfo param) {
   IntPtr req_bytes;
-  string info;
+  OPENCL_SUCCEED(CL10.GetPlatformInfo(platform, param, IntPtr.Zero, null, out req_bytes));
 
-  OPENCL_SUCCEED(GetPlatformInfo(platform, param, 0, null, out req_bytes));
-
-  char[] info = new[(int) req_bytes];
-  fixed (char* ptr = &info[0])
+  char[] info = new char[(int) req_bytes];
+  unsafe
   {
-      OPENCL_SUCCEED(GetPlatformCover(platform, param, req_bytes, new IntPtr(ptr), null));
+      fixed (char* ptr = &info[0])
+      {
+          OPENCL_SUCCEED(CL10.GetPlatformInfo(platform, param, req_bytes, new IntPtr(ptr), null));
+      }
   }
 
   return new string(info);
 }
 
-static string opencl_device_info(CLDeviceHandle device,
-                                 CompuePlatformInfo param) {
+string opencl_device_info(CLDeviceHandle device,
+                                 ComputePlatformInfo param) {
   IntPtr req_bytes;
-  string info;
+  OPENCL_SUCCEED(CL10.GetDeviceInfo(device, param, 0, null, out req_bytes));
 
-  OPENCL_SUCCEED(GetDeviceInfo(device, param, 0, null, out req_bytes));
-
-  char[] info = new[(int) req_bytes];
-  fixed (char* ptr = &info[0])
+  char[] info = new char[(int) req_bytes];
+  unsafe
   {
-      OPENCL_SUCCEED(GetDeviceInfo(platform, param, req_bytes, new IntPtr(ptr), null));
+      fixed (char* ptr = &info[0])
+      {
+          OPENCL_SUCCEED(CL10.GetDeviceInfo(platform, param, req_bytes, new IntPtr(ptr), null));
+      }
   }
 
   return new string(info);
 }
 
-static void opencl_all_device_options(out opencl_device_option[] devices_out,
+void opencl_all_device_options(out opencl_device_option[] devices_out,
                                       out int num_devices_out) {
   int num_devices = 0, num_devices_added = 0;
 
@@ -203,21 +219,21 @@ static void opencl_all_device_options(out opencl_device_option[] devices_out,
   int num_platforms;
 
   // Find the number of platforms.
-  OPENCL_SUCCEED(GetPlatformIDs(0, null, out num_platforms));
+  OPENCL_SUCCEED(CL10.GetPlatformIDs(0, null, out num_platforms));
 
   // Make room for them.
   all_platforms = new CLPlatformHandle[num_platforms];
-  platform_num_devices = new int[num_platforms]
+  platform_num_devices = new int[num_platforms];
 
   // Fetch all the platforms.
-  OPENCL_SUCCEED(GetPlatformIDs(num_platforms, all_platforms, out 0));
+  OPENCL_SUCCEED(CL10.GetPlatformIDs(num_platforms, all_platforms, out 0));
 
   // Count the number of devices for each platform, as well as the
   // total number of devices.
   for (int i = 0; i < num_platforms; i++)
   {
-    if (GetDeviceIDs(all_platforms[i], ComputeDeviceTypes.All,
-                     0, null, out platform_num_devices[i]) == CL_SUCCESS)
+    if (CL10.GetDeviceIDs(all_platforms[i], ComputeDeviceTypes.All,
+                     0, null, out platform_num_devices[i]) == ComputeErrorCode.Success)
     {
       num_devices += platform_num_devices[i];
     }
@@ -243,18 +259,18 @@ static void opencl_all_device_options(out opencl_device_option[] devices_out,
     CLDeviceHandle[] platform_devices = new CLDeviceHandle[num_platform_devices];
 
     // Fetch all the devices.
-    OPENCL_SUCCEED(GetDeviceIDs(platform, ComputeDeviceTypes.All,
+    OPENCL_SUCCEED(CL10.GetDeviceIDs(platform, ComputeDeviceTypes.All,
                                 num_platform_devices, platform_devices, null));
 
     // Loop through the devices, adding them to the devices array.
-    for (int i = 0; i < num_platform_devices; i++) {
-      string device_name = opencl_device_info(platform_devices[i], ComputeDeviceInfo.Name);
+    for (int j = 0; i < num_platform_devices; j++) {
+      string device_name = opencl_device_info(platform_devices[j], ComputeDeviceInfo.Name);
       devices[num_devices_added].platform = platform;
-      devices[num_devices_added].device = platform_devices[i];
-      OPENCL_SUCCEED(GetDeviceInfo(platform_devices[i], ComputeDeviceInfo.Type,
+      devices[num_devices_added].device = platform_devices[j];
+      OPENCL_SUCCEED(CL10.GetDeviceInfo(platform_devices[j], ComputeDeviceInfo.Type,
                                    sizeof(cl_device_type),
                                    &devices[num_devices_added].device_type,
-                                   NULL));
+                                   null));
       // We don't want the structs to share memory, so copy the platform name.
       // Each device name is already unique.
       devices[num_devices_added].platform_name = strclone(platform_name);
@@ -298,50 +314,56 @@ opencl_device_option get_preferred_device(opencl_config cfg) {
 
 }
 
-void describe_device_option(struct opencl_device_option device) {
+void describe_device_option(opencl_device_option device) {
   Console.Error.WriteLine("Using platform: {0}", device.platform_name);
   Console.Error.WriteLine("Using device: {0}", device.device_name);
 }
 
-cl_build_status build_opencl_program(out CLProgramHandle program, CLDeviceHandle device, string options) {
-    int ret_val = CL10.BuildProgram(program, 1, new []{device}, options, null, null);
+ComputeProgramBuildStatus build_opencl_program(out CLProgramHandle program, CLDeviceHandle device, string options) {
+    ComputeErrorCode ret_val = CL10.BuildProgram(program, 1, new []{device}, options, null, null);
 
   // Avoid termination due to CL_BUILD_PROGRAM_FAILURE
-  if (ret_val != Success && ret_val != BuildProgramFailure) {
-    assert(ret_val == 0);
+  if (ret_val != ComputeErrorCode.Success && ret_val != ComputeErrorCode.BuildProgramFailure) {
+      Debug.Assert((int) ret_val == 0);
   }
 
-  int build_status;
+  ComputeProgramBuildStatus build_status;
+  unsafe
+  {
   ret_val = CL10.GetProgramBuildInfo(program,
                                      device,
                                      ComputeProgramBuildInfo.Status,
-                                     sizeof(int),
+                                     new IntPtr(sizeof(int)),
                                      &build_status,
                                      null);
-  assert(ret_val == 0);
+  }
+  Debug.Assert(ret_val == 0);
 
-  if (build_status != Success) {
+  if (build_status != ComputeProgramBuildStatus.Success) {
     char[] build_log;
     int ret_val_size;
     ret_val = CL10.GetProgramBuildInfo(program,
                                        device,
                                        ComputeProgramBuildInfo.BuildLog,
-                                       0,
+                                       IntPtr.Zero,
                                        null,
                                        &ret_val_size);
-    assert(ret_val == 0);
+    Debug.Assert(ret_val == 0);
 
     build_log = new byte[ret_val_size+1];
+    unsafe
+    {
     fixed (char* ptr = &build_log[0])
     {
-        clGetProgramBuildInfo(program,
-                              device,
-                              ComputeProgramBuildInfo.BuildLog,
-                              ret_val_size,
-                              new IntPtr(ptr),
-                              null);
+        CL10.GetProgramBuildInfo(program,
+                                 device,
+                                 ComputeProgramBuildInfo.BuildLog,
+                                 new IntPtr(ret_val_size),
+                                 new IntPtr(ptr),
+                                 null);
     }
-    assert(ret_val == 0);
+    }
+    Debug.Assert(ret_val == 0);
 
     // The spec technically does not say whether the build log is zero-terminated, so let's be careful.
     build_log[ret_val_size] = '\0';
@@ -353,13 +375,14 @@ cl_build_status build_opencl_program(out CLProgramHandle program, CLDeviceHandle
 
 /* Fields in a bitmask indicating which types we must be sure are
    available. */
-enum opencl_required_type { OPENCL_F64 = 1 };
+enum opencl_required_type { OPENCL_F64 = True };
 
 // We take as input several strings representing the program, because
 // C does not guarantee that the compiler supports particularly large
 // literals.  Notably, Visual C has a limit of 2048 characters.  The
 // array must be NULL-terminated.
-CLProgramHandle setup_opencl(string[] srcs,
+CLProgramHandle setup_opencl(out opencl_config cfg,
+                             string[] srcs,
                              int required_types) {
 
   int error;
@@ -369,7 +392,7 @@ CLProgramHandle setup_opencl(string[] srcs,
 
   lockstep_width = 0;
 
-  opencl_device_option device_option = get_preferred_device(out cfg);
+  opencl_device_option device_option = get_preferred_device(cfg);
 
   if (cfg.debugging) {
     describe_device_option(device_option);
@@ -378,13 +401,16 @@ CLProgramHandle setup_opencl(string[] srcs,
   device = device = device_option.device;
   platform = platform = device_option.platform;
 
-  if (required_types & OPENCL_F64) {
-    uint supported;
+  if (required_types && opencl_required_type.OPENCL_F64) {
+    int supported;
+    unsafe
+    {
     OPENCL_SUCCEED(CL10.GetDeviceInfo(device,
                                       ComputeDeviceInfo.PreferredVectorWidthDouble,
-                                      sizeof(uint),
+                                      new IntPtr(sizeof(int)),
                                       &supported,
-                                      NULL));
+                                      null));
+    }
     if (supported == 0) {
       panic(1,
             "Program uses double-precision floats, but this is not supported on chosen device: {0}\n",
@@ -392,13 +418,16 @@ CLProgramHandle setup_opencl(string[] srcs,
     }
   }
 
-  OPENCL_SUCCEED(GetDeviceInfo(device,
+  unsafe
+  {
+  OPENCL_SUCCEED(CL10.GetDeviceInfo(device,
                                ComputeDeviceInfo.MaxWorkGroupSize,
                                sizeof(int),
                                &max_group_size,
                                null));
+  }
 
-  int max_tile_size = Math.Sqrt(max_group_size);
+  int max_tile_size = (int) Math.Sqrt(max_group_size);
 
   if (max_group_size < cfg.default_group_size) {
       Console.Error.WriteLine("Note: Device limits default group size to {0} (down from {1}).\n",
@@ -454,10 +483,10 @@ CLProgramHandle setup_opencl(string[] srcs,
   };
   // Note that nVidia's OpenCL requires the platform property
   ctx = CL10.CreateContext(properties, 1, new []{device}, null, null, out error);
-  assert(error == 0);
+  Debug.Assert(error == 0);
 
   queue = CL10.CreateCommandQueue(ctx, new[]{device}, 0, out error);
-  assert(error == 0);
+  Debug.Assert(error == 0);
 
   // Make sure this function is defined.
   post_opencl_setup(&device_option);
@@ -488,7 +517,7 @@ CLProgramHandle setup_opencl(string[] srcs,
   }
 
   prog = CL10.CreateProgramWithSource(ctx, 1, src_ptr, src_size, &error);
-  assert(error == 0);
+  Debug.Assert(error == 0);
 
   int compile_opts_size = 1024;
 

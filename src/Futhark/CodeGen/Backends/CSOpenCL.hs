@@ -39,9 +39,13 @@ compileProg module_name prog = do
                      , CS.opsAllocate = allocateOpenCLBuffer
                      , CS.opsCopy = copyOpenCLMemory
                      , CS.opsStaticArray = staticOpenCLArray
+                     , CS.opsEntryInput = unpackArrayInput
+                     , CS.opsEntryOutput = packArrayOutput
                      }
-        imports = [Using Nothing "Cloo"]
-        defines = [Escape csOpenCL]
+        imports = [ Using Nothing "Cloo"
+                  , Using Nothing "Cloo.Bindings" ]
+        defines = [ Escape csOpenCL
+                  , Escape csPanic]
 
 cliOptions :: [Option]
 cliOptions = [ Option { optionLongName = "platform"
