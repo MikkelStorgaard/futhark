@@ -15,6 +15,7 @@ import Futhark.CodeGen.OpenCL.Kernels
 
 intT, stringT, intArrayT, stringArrayT :: CSType
 intT = Primitive $ CSInt Int32T
+longT = Primitive $ CSInt Int64T
 stringT = Primitive StringT
 intArrayT = Composite $ ArrayT intT
 stringArrayT = Composite $ ArrayT stringT
@@ -28,9 +29,7 @@ generateBoilerplate opencl_code opencl_prelude kernel_names types sizes = do
   let (opencl_fields, opencl_inits, top_decls, later_top_decls) =
         openClDecls kernel_names opencl_code opencl_prelude
 
-  CS.atInit top_decls
-
-
+  CS.stm top_decls
 
   CS.stm $ AssignTyped stringArrayT (Var "size_names")
     (Just $ Collection "[]" (map (String . pretty) $ M.keys sizes))
@@ -69,85 +68,89 @@ generateBoilerplate opencl_code opencl_prelude kernel_names types sizes = do
   CS.stm $ StructDef cfg [ (CustomT "opencl_config", "opencl")
                          , (intArrayT, "sizes")]
 
+  let tmp_cfg = Var "tmp_cfg"
   CS.stm $ CS.funDef new_cfg (CustomT cfg) []
-    [ Assign (Var "cfg") $ CS.simpleInitClass cfg []
-    , If (BinOp "==" (Var "cfg") Null) [Return Null][]
-    , Reassign (Var "cfg.sizes") (Collection "int[]" (replicate (M.size sizes-1) (Integer 0)))
-    , Exp $ CS.simpleCall "opencl_config_init" [ Out $ Var "cfg.opencl", (Integer . toInteger) $ M.size sizes
-                                               , Var "size_names", Var "cfg.sizes", Var "size_classes" ]
-    , Reassign (Var "cfg.opencl.transpose_block_dim") (Integer transposeBlockDim)
-    , Return (Var cfg)
+    [ Assign tmp_cfg $ CS.simpleInitClass cfg []
+    , Reassign (Field tmp_cfg "sizes") (Collection "int[]" (replicate (M.size sizes) (Integer 0)))
+    , Exp $ CS.simpleCall "opencl_config_init" [ Out $ Field tmp_cfg "opencl", (Integer . toInteger) $ M.size sizes
+                                               , Var "size_names", Field tmp_cfg "sizes", Var "size_classes" ]
+    , Reassign (Field tmp_cfg "opencl.transpose_block_dim") (Integer transposeBlockDim)
+    , Return tmp_cfg
     ]
 
-  CS.stm $ CS.funDef cfg_set_debugging VoidT [(OutT $ CustomT cfg, "cfg"),(Primitive BoolT, "flag")]
-    [Reassign (Var "cfg.opencl.debugging") (Var "flag")]
+  CS.stm $ CS.funDef cfg_set_debugging VoidT [(RefT $ CustomT cfg, "_cfg"),(Primitive BoolT, "flag")]
+    [Reassign (Var "_cfg.opencl.debugging") (Var "flag")]
 
-  CS.stm $ CS.funDef cfg_set_device VoidT [(OutT $ CustomT cfg, "cfg"),(stringT, "s")]
-    [Exp $ CS.simpleCall "set_preferred_device" [Out $ Var "cfg.opencl", Var "s"]]
+  CS.stm $ CS.funDef cfg_set_device VoidT [(RefT $ CustomT cfg, "_cfg"),(stringT, "s")]
+    [Exp $ CS.simpleCall "set_preferred_device" [Ref $ Var "_cfg.opencl", Var "s"]]
 
-  CS.stm $ CS.funDef cfg_set_platform VoidT [(OutT $ CustomT cfg, "cfg"),(stringT, "s")]
-    [Exp $ CS.simpleCall "set_preferred_platform" [Out $ Var "cfg.opencl", Var "s"]]
+  CS.stm $ CS.funDef cfg_set_platform VoidT [(RefT $ CustomT cfg, "_cfg"),(stringT, "s")]
+    [Exp $ CS.simpleCall "set_preferred_platform" [Ref $ Var "_cfg.opencl", Var "s"]]
 
-  CS.stm $ CS.funDef cfg_dump_program_to VoidT [(OutT $ CustomT cfg, "cfg"),(stringT, "path")]
-    [Reassign (Var "cfg.opencl.dump_program_to") (Var "path")]
+  CS.stm $ CS.funDef cfg_dump_program_to VoidT [(RefT $ CustomT cfg, "_cfg"),(stringT, "path")]
+    [Reassign (Var "_cfg.opencl.dump_program_to") (Var "path")]
 
-  CS.stm $ CS.funDef cfg_load_program_from VoidT [(OutT $ CustomT cfg, "cfg"),(stringT, "path")]
-    [Reassign (Var "cfg.opencl.load_program_from") (Var "path")]
+  CS.stm $ CS.funDef cfg_load_program_from VoidT [(RefT $ CustomT cfg, "_cfg"),(stringT, "path")]
+    [Reassign (Var "_cfg.opencl.load_program_from") (Var "path")]
 
-  CS.stm $ CS.funDef cfg_set_default_group_size VoidT [(OutT $ CustomT cfg, "cfg"),(intT, "size")]
-    [Reassign (Var "cfg.opencl.default_group_size") (Var "size")]
+  CS.stm $ CS.funDef cfg_set_default_group_size VoidT [(RefT $ CustomT cfg, "_cfg"),(intT, "size")]
+    [Reassign (Var "_cfg.opencl.default_group_size") (Var "size")]
 
-  CS.stm $ CS.funDef cfg_set_default_num_groups VoidT [(OutT $ CustomT cfg, "cfg"),(intT, "num")]
-    [Reassign (Var "cfg.opencl.default_num_groups") (Var "num")]
+  CS.stm $ CS.funDef cfg_set_default_num_groups VoidT [(RefT $ CustomT cfg, "_cfg"),(intT, "num")]
+    [Reassign (Var "_cfg.opencl.default_num_groups") (Var "num")]
 
 
-  CS.stm $ CS.funDef cfg_set_default_tile_size VoidT [(OutT $ CustomT cfg, "cfg"),(intT, "size")]
-    [Reassign (Var "cfg.opencl.default_tile_size") (Var "size")]
+  CS.stm $ CS.funDef cfg_set_default_tile_size VoidT [(RefT $ CustomT cfg, "_cfg"),(intT, "size")]
+    [Reassign (Var "_cfg.opencl.default_tile_size") (Var "size")]
 
-  CS.stm $ CS.funDef cfg_set_default_threshold VoidT [(OutT $ CustomT cfg, "cfg"),(intT, "size")]
-    [Reassign (Var "cfg.opencl.default_threshold") (Var "size")]
+  CS.stm $ CS.funDef cfg_set_default_threshold VoidT [(RefT $ CustomT cfg, "_cfg"),(intT, "size")]
+    [Reassign (Var "_cfg.opencl.default_threshold") (Var "size")]
 
-  CS.stm $ CS.funDef cfg_set_size (Primitive BoolT) [(OutT $ CustomT cfg, "cfg")
+  CS.stm $ CS.funDef cfg_set_size (Primitive BoolT) [(RefT $ CustomT cfg, "_cfg")
                                                  ,(stringT, "size_name")
                                                  ,(intT, "size_value")]
     [ AST.For "i" ((Integer . toInteger) $ M.size sizes)
       [ If (BinOp "==" (Var "size_name") (Index (Var "size_names") (IdxExp (Var "i"))))
-          [ Reassign (Index (Var "cfg.sizes") (IdxExp (Var "i"))) (Var "size_value")
+          [ Reassign (Index (Var "_cfg.sizes") (IdxExp (Var "i"))) (Var "size_value")
           , Return (AST.Bool True)] []
       , Return $ AST.Bool False]]
 
 
+  let ctx = CS.publicName "context"
+  let new_ctx = CS.publicName "context_new"
+  let sync_ctx = CS.publicName "context_sync"
 --  (fields, init_fields) <- GC.contextContents
 
-  mapM_ (\(tp, vname) -> atInit $ AssignTyped tp (Var vname) Nothing) $
-    [(intT, "detail_memory")
-    , (Primitive BoolT,  "debugging")
+  CS.stm $ StructDef ctx $
+    [ (Primitive BoolT, "detail_memory")
+    , (Primitive BoolT, "debugging")
     , (CustomT "opencl_context", "opencl")
     , (CustomT "sizes", "sizes") ]
     ++ opencl_fields
 
   mapM_ CS.stm later_top_decls
 
-  let set_required_types = [Reassign (Var "required_types") (Var "OPENCL_F64")
+  CS.addMemberDecl $ AssignTyped (CustomT ctx) (Var "ctx") Nothing
+  CS.addMemberDecl $ AssignTyped (CustomT cfg) (Var "cfg") Nothing
+  CS.addMemberDecl $ AssignTyped (Primitive BoolT) (Var "synchronous") (Just $ AST.Bool False)
+
+  let set_required_types = [Reassign (Var "required_types") (AST.Bool True)
                            | FloatType Float64 `elem` types]
 
-      set_sizes = zipWith (\i k -> Reassign (Field (Var "sizes") (show k))
+      set_sizes = zipWith (\i k -> Reassign (Field (Var "ctx.sizes") (pretty k))
                                             (Index (Var "cfg.sizes") (IdxExp $ (Integer . toInteger) i)))
                           [(0::Int)..] $ M.keys sizes
 
-  let new_ctx = CS.publicName "context_new"
-  let sync_ctx = CS.publicName "context_sync"
 
   CS.stm $ CS.funDef new_ctx VoidT [(CustomT cfg, "cfg")] $
-    [ Reassign (Var "detail_memory") (Var "cfg.opencl.debugging")
-    , Reassign (Var "debugging") (Var "cfg.opencl.debugging")
-    , Reassign (Var "opencl.cfg") (Var "cfg.opencl")]
+    [ Reassign (Var "ctx.detail_memory") (Var "cfg.opencl.debugging")
+    , Reassign (Var "ctx.debugging") (Var "cfg.opencl.debugging")
+    , Reassign (Var "ctx.opencl.cfg") (Var "cfg.opencl")]
     ++ opencl_inits ++
-    [ AssignTyped intT (Var "required_types") (Just $ Integer 0)
-    , AssignTyped intT (Var "error") Nothing ]
+    [ Assign (Var "required_types") (AST.Bool False) ]
     ++ set_required_types ++
     [ AssignTyped (CustomT "CLProgramHandle") (Var "prog")
-        (Just $ CS.simpleCall "setup_opencl" [ Out $ Var "opencl"
+        (Just $ CS.simpleCall "setup_opencl" [ Ref $ Var "ctx"
                                              , Var "opencl_program"
                                              , Var "required_types"])]
     ++ concatMap loadKernelByName kernel_names
@@ -169,18 +172,22 @@ openClDecls kernel_names opencl_program opencl_prelude =
           [ (intT, "total_runs")
           , (Primitive $ CSInt Int64T, "total_runtime")]
           ++ concatMap (\name -> [(CustomT "CLKernelHandle", name)
-                                 ,(intT, kernelRuntime name)
+                                 ,(longT, kernelRuntime name)
                                  ,(intT, kernelRuns name)]) kernel_names
 
         ctx_inits =
-          [ Reassign (Var "total_runs") (Integer 0)
-          , Reassign (Var "total_runtime") (Integer 0) ]
-          ++ concatMap (\name -> [ Reassign (Var $ kernelRuntime name) (Integer 0)
-                                 , Reassign (Var $ kernelRuns name) (Integer 0)]
+          [ Reassign (Var $ ctx "total_runs") (Integer 0)
+          , Reassign (Var $ ctx "total_runtime") (Integer 0) ]
+          ++ concatMap (\name -> [ Reassign (Var $ (ctx . kernelRuntime) name) (Integer 0)
+                                 , Reassign (Var $ (ctx . kernelRuns) name) (Integer 0)]
                   ) kernel_names
 
+
+        futhark_context = CS.publicName "context"
+
         openCL_load = [CS.funDef "post_opencl_setup" VoidT
-            [(OutT $ CustomT "opencl_device_option", "option")] $ map sizeHeuristicsCode sizeHeuristicsTable]
+            [ (RefT $ CustomT futhark_context, "ctx")
+            , (RefT $ CustomT "opencl_device_option", "option")] $ map sizeHeuristicsCode sizeHeuristicsTable]
 
         openCL_boilerplate =
           AssignTyped stringArrayT (Var "opencl_program")
@@ -188,7 +195,7 @@ openClDecls kernel_names opencl_program opencl_prelude =
 
 loadKernelByName :: String -> [CSStmt]
 loadKernelByName name =
-  [ Reassign (Var name)
+  [ Reassign (Var $ ctx name)
       (CS.simpleCall "CL10.CreateKernel" [Var "prog", String name, Out $ Var "error"])
   , AST.Assert (BinOp "==" (Var "error") (Integer 0)) ""
   , If (Var "debugging")
@@ -237,7 +244,7 @@ sizeHeuristicsCode :: SizeHeuristic -> CSStmt
 sizeHeuristicsCode (SizeHeuristic platform_name device_type which what) =
   let which'' = BinOp "==" which' (Integer 0)
       option_contains_platform_name = CS.simpleCall "option.platform_name.Contains" [String platform_name]
-      option_contains_device_type = BinOp "==" (Var "option_device_type") (Var $ clDeviceType device_type)
+      option_contains_device_type = BinOp "==" (Var "option.device_type") (Var $ clDeviceType device_type)
   in If (BinOp "&&" which''
           (BinOp "&&" option_contains_platform_name
                       option_contains_device_type))
@@ -247,10 +254,10 @@ sizeHeuristicsCode (SizeHeuristic platform_name device_type which what) =
         clDeviceType DeviceCPU = "ComputeDeviceTypes.Cpu"
 
         which' = case which of
-                   LockstepWidth -> Var "lockstep_width"
-                   NumGroups ->     Var "cfg.default_num_groups"
-                   GroupSize ->     Var "cfg.default_group_size"
-                   TileSize ->      Var "cfg.default_tile_size"
+                   LockstepWidth -> Var "ctx.opencl.lockstep_width"
+                   NumGroups ->     Var "ctx.opencl.cfg.default_num_groups"
+                   GroupSize ->     Var "ctx.opencl.cfg.default_group_size"
+                   TileSize ->      Var "ctx.opencl.cfg.default_tile_size"
 
         get_size = case what of
                      HeuristicConst x ->
@@ -258,7 +265,18 @@ sizeHeuristicsCode (SizeHeuristic platform_name device_type which what) =
 
                      HeuristicDeviceInfo s ->
                        -- This only works for device info that fits in the variable.
-                       let s' = "CL_DEVICE_" ++ s
-                       in Exp $ CS.simpleCall "CL10.GetDeviceInfo"
-                            [ Var "device", String s', CS.simpleCall "sizeOf" [which']
-                            , Out which', Null ]
+                       Unsafe
+                       [
+                         Exp $ CS.simpleCall "CL10.GetDeviceInfo"
+                           [ Var "ctx.opencl.device", Var $ clooString s,
+                             CS.simpleCall "new IntPtr" [CS.simpleCall "Marshal.SizeOf" [which']]
+                           , Addr which', Null ]
+                       ]
+
+        clooString s = case s of
+                         "MAX_COMPUTE_UNITS" -> "ComputeDeviceInfo.MaxComputeUnits"
+                         _ -> undefined
+
+ctx, context :: String -> String
+ctx = (++) "ctx."
+context = (++) "ctx_"

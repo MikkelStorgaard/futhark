@@ -65,6 +65,7 @@ data CSType = Composite CSComp
             | CustomT String
             | StaticT CSType
             | OutT CSType
+            | RefT CSType
             | VoidT
             deriving (Eq, Show)
 
@@ -89,12 +90,14 @@ instance Pretty CSType where
   ppr (MemoryT _) = text "byte[]"
   ppr (StaticT t) = text "static" <+> ppr t
   ppr (OutT t) = text "out" <+> ppr t
+  ppr (RefT t) = text "ref" <+> ppr t
   ppr VoidT = text "void"
 
 instance Pretty CSPrim where
   ppr BoolT = text "bool"
   ppr ByteT = text "byte"
   ppr (CSInt t) = ppr t
+  ppr (CSUInt t) = ppr t
   ppr (CSFloat t) = ppr t
   ppr StringT = text "string"
   ppr IntPtrT = text "IntPtr"
@@ -127,6 +130,7 @@ data CSExp = Integer Integer
            | String String
            | RawStringLiteral String
            | Var String
+           | Addr CSExp
            | Ref CSExp
            | Out CSExp
            | Deref String
@@ -147,6 +151,7 @@ data CSExp = Integer Integer
            | Field CSExp String
            | Lambda CSExp [CSStmt]
            | Collection String [CSExp]
+           | This CSExp
            | Null
            -- | Dict [(CSExp, CSExp)]
            deriving (Eq, Show)
@@ -161,8 +166,9 @@ instance Pretty CSExp where
   ppr (String x) = text $ show x
   ppr (RawStringLiteral s) = text "@\"" <> text s <> text "\""
   ppr (Var n) = text $ map (\x -> if x == '\'' then 'm' else x) n
-  ppr (Ref n) =  text "&" <> ppr n
-  ppr (Out n) =  text "out" <+> ppr n
+  ppr (Addr e) =  text "&" <> ppr e
+  ppr (Ref e) =  text "ref" <+> ppr e
+  ppr (Out e) =  text "out" <+> ppr e
   ppr (Deref n) =  text "*" <> text (map (\x -> if x == '\'' then 'm' else x) n)
   ppr (BinOp s e1 e2) = parens(ppr e1 <+> text s <+> ppr e2)
   ppr (UnOp s e) = text s <> parens (ppr e)
@@ -182,6 +188,7 @@ instance Pretty CSExp where
   ppr (Lambda expr [Exp e]) = ppr expr <+> text "=>" <+> ppr e
   ppr (Lambda expr stmts) = ppr expr <+> text "=>" <+> braces(stack $ map ppr stmts)
   ppr (Collection collection exps) = text "new" <+> text collection <> braces(commasep $ map ppr exps)
+  ppr (This e) = text "this" <> dot <> ppr e
   ppr Null = text "null"
   ppr (AllocArray t len) = text "new" <+> ppr t <> lbracket <> ppr len <> rbracket
   --ppr (Dict exps) = undefined
@@ -235,6 +242,12 @@ data CSStmt = If CSExp [CSStmt] [CSStmt]
                 deriving (Eq, Show)
 
 instance Pretty CSStmt where
+  ppr (If cond tbranch []) =
+    text "if" <+> parens(ppr cond) </>
+    lbrace </>
+    indent 4 (stack $ map ppr tbranch) </>
+    rbrace
+
   ppr (If cond tbranch fbranch) =
     text "if" <+> parens(ppr cond) </>
     lbrace </>
@@ -326,7 +339,7 @@ instance Pretty CSStmt where
 
   ppr (ConstructorDef d) = ppr d
 
-  ppr (StructDef name assignments) = text "struct" <+> text name <> braces(stack $ map (\a -> text "public" <+> ppr a) assignments)
+  ppr (StructDef name assignments) = text "struct" <+> text name <> braces(stack $ map (\(tp,field) -> text "public" <+> ppr tp <+> text field <> semi) assignments)
 
   ppr (CSDecl decl) = text $ show decl
 

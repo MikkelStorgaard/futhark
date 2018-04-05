@@ -39,6 +39,7 @@ module Futhark.CodeGen.Backends.GenericCSharp
   , stm
   , stms
   , atInit
+  , addMemberDecl
   , collect'
   , collect
   , simpleCall
@@ -202,12 +203,14 @@ data CompilerState s = CompilerState {
   , compInit :: [CSStmt]
   , compDebugItems :: [CSStmt]
   , compUserState :: s
+  , compMemberDecls :: [CSStmt]
 }
 
 newCompilerState :: VNameSource -> s -> CompilerState s
 newCompilerState src s = CompilerState { compNameSrc = src
                                        , compInit = []
                                        , compDebugItems = []
+                                       , compMemberDecls = []
                                        , compUserState = s }
 
 newtype CompilerM op s a = CompilerM (RWS (CompilerEnv op s) [CSStmt] (CompilerState s) a)
@@ -219,7 +222,6 @@ newtype CompilerM op s a = CompilerM (RWS (CompilerEnv op s) [CSStmt] (CompilerS
 instance MonadFreshNames (CompilerM op s) where
   getNameSource = gets compNameSrc
   putNameSource src = modify $ \s -> s { compNameSrc = src }
-
 collect :: CompilerM op s () -> CompilerM op s [CSStmt]
 collect m = pass $ do
   ((), w) <- listen m
@@ -233,6 +235,10 @@ collect' m = pass $ do
 atInit :: CSStmt -> CompilerM op s ()
 atInit x = modify $ \s ->
   s { compInit = compInit s ++ [x] }
+
+addMemberDecl :: CSStmt -> CompilerM op s ()
+addMemberDecl x = modify $ \s ->
+  s { compMemberDecls = compMemberDecls s ++ [x] }
 
 contextFinalInits :: CompilerM op s [CSStmt]
 contextFinalInits = gets compInit
@@ -353,8 +359,12 @@ compileProg module_name constructor imports defines ops userstate boilerplate pr
   return $ pretty (CSProg $ Escape "#define DEBUG" : imports' ++ prog')
   where compileProg' = do
           definitions <- mapM compileFunc funs
-          at_inits <- gets compInit
           opencl_boilerplate <- collect boilerplate
+          at_inits <- gets compInit
+          extraMemberDecls <- gets compMemberDecls
+          let member_decls' = member_decls ++ extraMemberDecls
+
+  
 
           case module_name of
             Just name -> do
@@ -374,12 +384,15 @@ compileProg module_name constructor imports defines ops userstate boilerplate pr
               debug_ending <- gets compDebugItems
               return ((ClassDef $
                        Class name $
-                         constructor' : defines' ++ opencl_boilerplate ++
-                         map FunDef (definitions ++ entry_point_defs) ++ member_decls ++
+                         constructor' : defines' ++
+                         opencl_boilerplate ++
+                         map FunDef (definitions ++ entry_point_defs) ++
+                         member_decls' ++
                          [PublicFunDef $ Def "internal_entry" VoidT [(string_arrayT, "args")] $
                            parse_options ++ selectEntryPoint entry_point_names entry_points
                            ++ debug_ending
-                         ]) :
+                         ]
+                      ) :
                      [ClassDef $ Class "Program"
                        [StaticFunDef $ Def "Main" VoidT [(string_arrayT,"args")] main_entry]])
 
@@ -395,7 +408,8 @@ compileProg module_name constructor imports defines ops userstate boilerplate pr
           , AssignTyped (CustomT "StreamWriter") (Var "runtime_file_writer") Nothing
           , AssignTyped (Primitive BoolT) (Var "do_warmup_run") (Just $ Bool False)
           , AssignTyped (Primitive $ CSInt Int32T) (Var "num_runs") (Just $ Integer 1)
-          , AssignTyped (Primitive StringT) (Var "entry_point") (Just $ String "main")]
+          , AssignTyped (Primitive StringT) (Var "entry_point") (Just $ String "main")
+          ]
 
         defines' = [ Escape csScalar
                    , Escape csMemory
@@ -601,7 +615,7 @@ extName :: String -> String
 extName = (++"_ext")
 
 sizeOf :: CSType -> CSExp
-sizeOf t = simpleCall "sizeOf" [(Var . pretty) t]
+sizeOf t = simpleCall "sizeof" [(Var . pretty) t]
 
 funDef :: String -> CSType -> [(CSType, String)] -> [CSStmt] -> CSStmt
 funDef s t args stmts = FunDef $ Def s t args stmts
