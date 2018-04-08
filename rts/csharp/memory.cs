@@ -2,6 +2,7 @@ public class FlatArray<T>
 {
     public long[] shape;
     public T[] array;
+
     public FlatArray(T[] data_array, long[] shape_array)
     {
         shape = shape_array;
@@ -96,12 +97,47 @@ byte[] allocateMem(ulong size)
     return new byte[size];
 }
 
+FlatArray<byte> createArray_byte(CLMemoryHandle mem, CLCommandQueueHandle queue, bool synchronous,
+                                 int nbytes, long[] shape)
+{
+    var byteArray = new byte[nbytes];
+    unsafe
+    {
+        fixed(void* ptr = &byteArray[0])
+        {
+            CL10.EnqueueReadBuffer(queue, mem, synchronous,
+                                   new IntPtr(0), new IntPtr(nbytes), new IntPtr(ptr),
+                                   0, null, null
+                                   );
+        }
+    }
+    return new FlatArray<byte>(byteArray, shape);
+}
+
 FlatArray<byte> createArray_byte(byte[] bytes, long[] shape)
 {
     var byteArray = new byte[bytes.Length / sizeof(byte)];
     Buffer.BlockCopy(bytes, 0, byteArray, 0, bytes.Length);
     return new FlatArray<byte>(byteArray, shape);
 }
+
+FlatArray<ushort> createArray_ushort(CLMemoryHandle mem, CLCommandQueueHandle queue, bool synchronous,
+                                   int nbytes, long[] shape)
+{
+    var byteArray = new ushort[nbytes / sizeof(ushort)];
+    unsafe
+    {
+        fixed(void* ptr = &byteArray[0])
+        {
+            CL10.EnqueueReadBuffer(queue, mem, synchronous,
+                                   new IntPtr(0), new IntPtr(nbytes), new IntPtr(ptr),
+                                   0, null, null
+                                   );
+        }
+    }
+    return new FlatArray<ushort>(byteArray, shape);
+}
+
 FlatArray<ushort> createArray_ushort(byte[] bytes, long[] shape)
 {
     var ushortArray = new ushort[bytes.Length / sizeof(ushort)];
@@ -109,11 +145,47 @@ FlatArray<ushort> createArray_ushort(byte[] bytes, long[] shape)
     return new FlatArray<ushort>(ushortArray, shape);
 }
 
+
+
+
+FlatArray<uint> createArray_uint(CLMemoryHandle mem, CLCommandQueueHandle queue, bool synchronous,
+                                   int nbytes, long[] shape)
+{
+    var byteArray = new uint[nbytes / sizeof(uint)];
+    unsafe
+    {
+        fixed(void* ptr = &byteArray[0])
+        {
+            CL10.EnqueueReadBuffer(queue, mem, synchronous,
+                                   new IntPtr(0), new IntPtr(nbytes), new IntPtr(ptr),
+                                   0, null, null
+                                   );
+        }
+    }
+    return new FlatArray<uint>(byteArray, shape);
+}
 FlatArray<uint> createArray_uint(byte[] bytes, long[] shape)
 {
     var uintArray = new uint[bytes.Length / sizeof(uint)];
     Buffer.BlockCopy(bytes, 0, uintArray, 0, bytes.Length);
     return new FlatArray<uint>(uintArray, shape);
+}
+
+FlatArray<ulong> createArray_ulong(CLMemoryHandle mem, CLCommandQueueHandle queue, bool synchronous,
+                                 int nbytes, long[] shape)
+{
+    var byteArray = new ulong[nbytes / sizeof(ulong)];
+    unsafe
+    {
+        fixed(void* ptr = &byteArray[0])
+        {
+            CL10.EnqueueReadBuffer(queue, mem, synchronous,
+                                   new IntPtr(0), new IntPtr(nbytes), new IntPtr(ptr),
+                                   0, null, null
+                                   );
+        }
+    }
+    return new FlatArray<ulong>(byteArray, shape);
 }
 
 FlatArray<ulong> createArray_ulong(byte[] bytes, long[] shape)
@@ -123,11 +195,45 @@ FlatArray<ulong> createArray_ulong(byte[] bytes, long[] shape)
     return new FlatArray<ulong>(ulongArray, shape);
 }
 
+FlatArray<sbyte> createArray_sbyte(CLMemoryHandle mem, CLCommandQueueHandle queue, bool synchronous,
+                                  int nbytes, long[] shape)
+{
+    var byteArray = new sbyte[nbytes / sizeof(sbyte)];
+    unsafe
+    {
+        fixed(void* ptr = &byteArray[0])
+        {
+            CL10.EnqueueReadBuffer(queue, mem, synchronous,
+                                   new IntPtr(0), new IntPtr(nbytes), new IntPtr(ptr),
+                                   0, null, null
+                                   );
+        }
+    }
+    return new FlatArray<sbyte>(byteArray, shape);
+}
+
 FlatArray<sbyte> createArray_sbyte(byte[] bytes, long[] shape)
 {
     var sbyteArray = new sbyte[bytes.Length / sizeof(sbyte)];
     Buffer.BlockCopy(bytes, 0, sbyteArray, 0, bytes.Length);
     return new FlatArray<sbyte>(sbyteArray, shape);
+}
+
+FlatArray<short> createArray_short(CLMemoryHandle mem, CLCommandQueueHandle queue, bool synchronous,
+                                  int nbytes, long[] shape)
+{
+    var byteArray = new short[nbytes / sizeof(short)];
+    unsafe
+    {
+        fixed(void* ptr = &byteArray[0])
+        {
+            CL10.EnqueueReadBuffer(queue, mem, synchronous,
+                                   new IntPtr(0), new IntPtr(nbytes), new IntPtr(ptr),
+                                   0, null, null
+                                   );
+        }
+    }
+    return new FlatArray<short>(byteArray, shape);
 }
 
 FlatArray<short> createArray_short(byte[] bytes, long[] shape)
@@ -137,6 +243,23 @@ FlatArray<short> createArray_short(byte[] bytes, long[] shape)
     return new FlatArray<short>(shortArray, shape);
 }
 
+FlatArray<int> createArray_int(CLMemoryHandle mem, CLCommandQueueHandle queue, bool synchronous,
+                                  int nbytes, long[] shape)
+{
+    var byteArray = new int[nbytes / sizeof(int)];
+    unsafe
+    {
+        fixed(void* ptr = &byteArray[0])
+        {
+            CL10.EnqueueReadBuffer(queue, mem, synchronous,
+                                   new IntPtr(0), new IntPtr(nbytes), new IntPtr(ptr),
+                                   0, null, null
+                                   );
+        }
+    }
+    return new FlatArray<int>(byteArray, shape);
+}
+
 FlatArray<int> createArray_int(byte[] bytes, long[] shape)
 {
     var intArray = new int[bytes.Length / sizeof(int)];
@@ -144,6 +267,22 @@ FlatArray<int> createArray_int(byte[] bytes, long[] shape)
     return new FlatArray<int>(intArray, shape);
 }
 
+FlatArray<long> createArray_long(CLMemoryHandle mem, CLCommandQueueHandle queue, bool synchronous,
+                                int nbytes, long[] shape)
+{
+    var byteArray = new long[nbytes / sizeof(long)];
+    unsafe
+    {
+        fixed(void* ptr = &byteArray[0])
+        {
+            CL10.EnqueueReadBuffer(queue, mem, synchronous,
+                                   new IntPtr(0), new IntPtr(nbytes), new IntPtr(ptr),
+                                   0, null, null
+                                   );
+        }
+    }
+    return new FlatArray<long>(byteArray, shape);
+}
 FlatArray<long> createArray_long(byte[] bytes, long[] shape)
 {
     var longArray = new long[bytes.Length / sizeof(long)];
@@ -151,6 +290,22 @@ FlatArray<long> createArray_long(byte[] bytes, long[] shape)
     return new FlatArray<long>(longArray, shape);
 }
 
+FlatArray<float> createArray_float(CLMemoryHandle mem, CLCommandQueueHandle queue, bool synchronous,
+                                 int nbytes, long[] shape)
+{
+    var byteArray = new float[nbytes / sizeof(float)];
+    unsafe
+    {
+        fixed(void* ptr = &byteArray[0])
+        {
+            CL10.EnqueueReadBuffer(queue, mem, synchronous,
+                                   new IntPtr(0), new IntPtr(nbytes), new IntPtr(ptr),
+                                   0, null, null
+                                   );
+        }
+    }
+    return new FlatArray<float>(byteArray, shape);
+}
 FlatArray<float> createArray_float(byte[] bytes, long[] shape)
 {
     var floatArray = new float[bytes.Length / sizeof(float)];
@@ -158,6 +313,22 @@ FlatArray<float> createArray_float(byte[] bytes, long[] shape)
     return new FlatArray<float>(floatArray, shape);
 }
 
+FlatArray<double> createArray_double(CLMemoryHandle mem, CLCommandQueueHandle queue, bool synchronous,
+                                 int nbytes, long[] shape)
+{
+    var byteArray = new double[nbytes / sizeof(double)];
+    unsafe
+    {
+        fixed(void* ptr = &byteArray[0])
+        {
+            CL10.EnqueueReadBuffer(queue, mem, synchronous,
+                                   new IntPtr(0), new IntPtr(nbytes), new IntPtr(ptr),
+                                   0, null, null
+                                   );
+        }
+    }
+    return new FlatArray<double>(byteArray, shape);
+}
 FlatArray<double> createArray_double(byte[] bytes, long[] shape)
 {
     var doubleArray = new double[bytes.Length / sizeof(double)];
@@ -165,6 +336,22 @@ FlatArray<double> createArray_double(byte[] bytes, long[] shape)
     return new FlatArray<double>(doubleArray, shape);
 }
 
+FlatArray<bool> createArray_bool(CLMemoryHandle mem, CLCommandQueueHandle queue, bool synchronous,
+                                 int nbytes, long[] shape)
+{
+    var byteArray = new bool[nbytes / sizeof(bool)];
+    unsafe
+    {
+        fixed(void* ptr = &byteArray[0])
+        {
+            CL10.EnqueueReadBuffer(queue, mem, synchronous,
+                                   new IntPtr(0), new IntPtr(nbytes), new IntPtr(ptr),
+                                   0, null, null
+                                   );
+        }
+    }
+    return new FlatArray<bool>(byteArray, shape);
+}
 FlatArray<bool> createArray_bool(byte[] bytes, long[] shape)
 {
     var boolArray = new bool[bytes.Length / sizeof(bool)];

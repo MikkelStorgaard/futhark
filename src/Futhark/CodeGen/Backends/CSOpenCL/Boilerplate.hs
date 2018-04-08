@@ -113,7 +113,8 @@ generateBoilerplate opencl_code opencl_prelude kernel_names types sizes = do
       [ If (BinOp "==" (Var "size_name") (Index (Var "size_names") (IdxExp (Var "i"))))
           [ Reassign (Index (Var "_cfg.sizes") (IdxExp (Var "i"))) (Var "size_value")
           , Return (AST.Bool True)] []
-      , Return $ AST.Bool False]]
+      ]
+    , Return $ AST.Bool False ]
 
 
   let ctx = CS.publicName "context"
@@ -122,7 +123,9 @@ generateBoilerplate opencl_code opencl_prelude kernel_names types sizes = do
 --  (fields, init_fields) <- GC.contextContents
 
   CS.stm $ StructDef ctx $
-    [ (Primitive BoolT, "detail_memory")
+    [ (Primitive IntPtrT, "NULL")
+    , (CustomT "CLMemoryHandle", "EMPTY_MEM_HANDLE")
+    , (Primitive BoolT, "detail_memory")
     , (Primitive BoolT, "debugging")
     , (CustomT "opencl_context", "opencl")
     , (CustomT "sizes", "sizes") ]
@@ -130,8 +133,13 @@ generateBoilerplate opencl_code opencl_prelude kernel_names types sizes = do
 
   mapM_ CS.stm later_top_decls
 
-  CS.addMemberDecl $ AssignTyped (CustomT ctx) (Var "ctx") Nothing
   CS.addMemberDecl $ AssignTyped (CustomT cfg) (Var "cfg") Nothing
+  CS.addMemberDecl $ AssignTyped (CustomT ctx) (Var "ctx") Nothing
+
+  CS.atInit $ Reassign (Var "cfg") $ CS.simpleCall new_cfg []
+  CS.atInit $ Exp $ CS.simpleCall new_ctx [Var "cfg"]
+  CS.atInit $ Reassign (Var "ctx.EMPTY_MEM_HANDLE") $ CS.simpleCall "empty_mem_handle" [Var "ctx.opencl.context"]
+
   CS.addMemberDecl $ AssignTyped (Primitive BoolT) (Var "synchronous") (Just $ AST.Bool False)
 
   let set_required_types = [Reassign (Var "required_types") (AST.Bool True)
@@ -143,7 +151,8 @@ generateBoilerplate opencl_code opencl_prelude kernel_names types sizes = do
 
 
   CS.stm $ CS.funDef new_ctx VoidT [(CustomT cfg, "cfg")] $
-    [ Reassign (Var "ctx.detail_memory") (Var "cfg.opencl.debugging")
+    [ AssignTyped (CustomT "ComputeErrorCode") (Var "error") Nothing
+    , Reassign (Var "ctx.detail_memory") (Var "cfg.opencl.debugging")
     , Reassign (Var "ctx.debugging") (Var "cfg.opencl.debugging")
     , Reassign (Var "ctx.opencl.cfg") (Var "cfg.opencl")]
     ++ opencl_inits ++
@@ -158,10 +167,10 @@ generateBoilerplate opencl_code opencl_prelude kernel_names types sizes = do
     ++ set_sizes
 
   CS.stm $ CS.funDef sync_ctx intT []
-    [ Exp $ CS.simpleCall "OPENCL_SUCCEED" [CS.simpleCall "CL10.Finish" [Var "queue"]]
+    [ Exp $ CS.simpleCall "OPENCL_SUCCEED" [CS.simpleCall "CL10.Finish" [Var "ctx.opencl.queue"]]
     , Return $ Integer 0 ]
 
-  mapM_ CS.debugReport $ openClReport kernel_names
+  CS.debugReport $ openClReport kernel_names
 
 
 openClDecls :: [String] -> String -> String
@@ -198,8 +207,8 @@ loadKernelByName name =
   [ Reassign (Var $ ctx name)
       (CS.simpleCall "CL10.CreateKernel" [Var "prog", String name, Out $ Var "error"])
   , AST.Assert (BinOp "==" (Var "error") (Integer 0)) ""
-  , If (Var "debugging")
-      [Exp $ consoleErrorWriteLine "Created kernel {0}" [Var name]]
+  , If (Var "ctx.debugging")
+      [Exp $ consoleErrorWriteLine "Created kernel {0}" [Var $ ctx name]]
       []
   ]
 
@@ -209,8 +218,9 @@ kernelRuntime = (++"_total_runtime")
 kernelRuns :: String -> String
 kernelRuns = (++"_runs")
 
-openClReport :: [String] -> [CSStmt]
-openClReport names = report_kernels ++ [report_total]
+openClReport :: [String] -> CSStmt
+openClReport names =
+  If (Var "ctx.debugging") (report_kernels ++ [report_total]) []
   where longest_name = foldl max 0 $ map length names
         report_kernels = concatMap reportKernel names
         format_string name =
@@ -219,8 +229,8 @@ openClReport names = report_kernels ++ [report_total]
                       name ++ padding,
                       "executed {0} times, with average runtime: {1:0.000000}\tand total runtime: {2:0.000000}"]
         reportKernel name =
-          let runs = kernelRuns name
-              total_runtime = kernelRuntime name
+          let runs = ctx $ kernelRuns name
+              total_runtime = ctx $ kernelRuntime name
           in [Exp $ consoleErrorWriteLine (format_string name)
                [ Var runs
                , Ternary (BinOp "!="
@@ -230,15 +240,13 @@ openClReport names = report_kernels ++ [report_total]
                            (Integer 0))
                  (Var runs) (Integer 1)
                , Cast (Primitive $ CSInt Int64T) $ Var total_runtime]
-             , AssignOp "+" (Var "total_runtime") (Var total_runtime)
-             , AssignOp "+" (Var "total_runs") (Var runs)
+             , AssignOp "+" (Var $ ctx "total_runtime") (Var total_runtime)
+             , AssignOp "+" (Var $ ctx "total_runs") (Var runs)
              ]
 
         ran_text = "Ran {0} kernels with cumulative runtime: {1:0.000000}"
-        report_total = If (Var "debugging")
-                          [Exp $ consoleErrorWriteLine ran_text [ Var "total_runs"
-                                                                , Var "total_runtime"]
-                          ] []
+        report_total = Exp $ consoleErrorWriteLine ran_text [ Var $ ctx "total_runs"
+                                                            , Var $ ctx "total_runtime"]
 
 sizeHeuristicsCode :: SizeHeuristic -> CSStmt
 sizeHeuristicsCode (SizeHeuristic platform_name device_type which what) =
@@ -267,10 +275,13 @@ sizeHeuristicsCode (SizeHeuristic platform_name device_type which what) =
                        -- This only works for device info that fits in the variable.
                        Unsafe
                        [
-                         Exp $ CS.simpleCall "CL10.GetDeviceInfo"
-                           [ Var "ctx.opencl.device", Var $ clooString s,
-                             CS.simpleCall "new IntPtr" [CS.simpleCall "Marshal.SizeOf" [which']]
-                           , Addr which', Null ]
+                         Fixed (CS.assignScalarPointer which' (Var "ptr"))
+                         [
+                           Exp $ CS.simpleCall "CL10.GetDeviceInfo"
+                             [ Var "ctx.opencl.device", Var $ clooString s
+                             , CS.simpleCall "new IntPtr" [CS.simpleCall "Marshal.SizeOf" [which']]
+                             , CS.toIntPtr $ Var "ptr", Out ctxNULL ]
+                         ]
                        ]
 
         clooString s = case s of
@@ -280,3 +291,6 @@ sizeHeuristicsCode (SizeHeuristic platform_name device_type which what) =
 ctx, context :: String -> String
 ctx = (++) "ctx."
 context = (++) "ctx_"
+
+ctxNULL :: CSExp
+ctxNULL = Var "ctx.NULL"

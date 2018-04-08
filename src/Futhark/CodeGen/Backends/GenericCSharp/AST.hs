@@ -62,6 +62,7 @@ data CSType = Composite CSComp
             | PointerT CSType
             | Primitive CSPrim
             | MemoryT String
+            | CLMemoryT String
             | CustomT String
             | StaticT CSType
             | OutT CSType
@@ -88,6 +89,7 @@ instance Pretty CSType where
   ppr (Primitive t) = ppr t
   ppr (CustomT t) = text t
   ppr (MemoryT _) = text "byte[]"
+  ppr (CLMemoryT _) = text "CLMemoryHandle"
   ppr (StaticT t) = text "static" <+> ppr t
   ppr (OutT t) = text "out" <+> ppr t
   ppr (RefT t) = text "ref" <+> ppr t
@@ -299,8 +301,8 @@ instance Pretty CSStmt where
     indent 4 (stack $ map ppr stmts) </>
     rbrace
 
-  ppr (Fixed assignment stmts) =
-    text "fixed" <+> parens(ppr assignment) </>
+  ppr (Fixed (AssignTyped _ ptr e) stmts) =
+    text "fixed" <+> parens(text "void*" <+> ppr ptr <+> text "=" <+> ppr e) </>
     lbrace </>
     indent 4 (stack $ map ppr stmts) </>
     rbrace

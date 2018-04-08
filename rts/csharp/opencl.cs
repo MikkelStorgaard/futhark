@@ -188,35 +188,37 @@ void set_preferred_device(ref opencl_config cfg, string s)
 string opencl_platform_info(CLPlatformHandle platform,
                             ComputePlatformInfo param) {
     IntPtr req_bytes;
-    OPENCL_SUCCEED(CL10.GetPlatformInfo(platform, param, IntPtr.Zero, null, out req_bytes));
+    IntPtr _null = new IntPtr();
+    OPENCL_SUCCEED(CL10.GetPlatformInfo(platform, param, _null, _null, out req_bytes));
 
-    char[] info = new char[(int) req_bytes];
+    byte[] info = new byte[(int) req_bytes];
     unsafe
     {
-        fixed (char* ptr = &info[0])
+        fixed (byte* ptr = &info[0])
         {
-            OPENCL_SUCCEED(CL10.GetPlatformInfo(platform, param, req_bytes, new IntPtr(ptr), null));
+            OPENCL_SUCCEED(CL10.GetPlatformInfo(platform, param, req_bytes, new IntPtr(ptr), out _null));
         }
     }
 
-    return new string(info);
+    return System.Text.Encoding.Default.GetString(info);
 }
 
 string opencl_device_info(CLDeviceHandle device,
                           ComputeDeviceInfo param) {
     IntPtr req_bytes;
-    OPENCL_SUCCEED(CL10.GetDeviceInfo(device, param, 0, null, out req_bytes));
+    IntPtr _null = new IntPtr();
+    OPENCL_SUCCEED(CL10.GetDeviceInfo(device, param, _null, _null, out req_bytes));
 
-    char[] info = new char[(int) req_bytes];
+    byte[] info = new byte[(int) req_bytes];
     unsafe
     {
-        fixed (char* ptr = &info[0])
+        fixed (byte* ptr = &info[0])
         {
-            OPENCL_SUCCEED(CL10.GetDeviceInfo(device, param, req_bytes, new IntPtr(ptr), null));
+            OPENCL_SUCCEED(CL10.GetDeviceInfo(device, param, req_bytes, new IntPtr(ptr), out _null));
         }
     }
+    return System.Text.Encoding.Default.GetString(info);
 
-    return new string(info);
 }
 
 void opencl_all_device_options(out opencl_device_option[] devices_out,
@@ -278,7 +280,7 @@ void opencl_all_device_options(out opencl_device_option[] devices_out,
         // Loop through the devices, adding them to the devices array.
         unsafe
         {
-            for (int j = 0; i < num_platform_devices; j++) {
+            for (int j = 0; j < num_platform_devices; j++) {
                 string device_name = opencl_device_info(platform_devices[j], ComputeDeviceInfo.Name);
                 devices[num_devices_added].platform = platform;
                 devices[num_devices_added].device = platform_devices[j];
@@ -330,6 +332,8 @@ opencl_device_option get_preferred_device(opencl_config cfg) {
     }
 
     panic(1, "Could not find acceptable OpenCL device.\n");
+    // this is never reached
+    throw new Exception();
 
 }
 
@@ -338,7 +342,7 @@ void describe_device_option(opencl_device_option device) {
     Console.Error.WriteLine("Using device: {0}", device.device_name);
 }
 
-ComputeProgramBuildStatus build_opencl_program(out CLProgramHandle program, CLDeviceHandle device, string options) {
+ComputeProgramBuildStatus build_opencl_program(ref CLProgramHandle program, CLDeviceHandle device, string options) {
     ComputeErrorCode ret_val = CL10.BuildProgram(program, 1, new []{device}, options, null, IntPtr.Zero);
 
     // Avoid termination due to CL_BUILD_PROGRAM_FAILURE
@@ -349,18 +353,19 @@ ComputeProgramBuildStatus build_opencl_program(out CLProgramHandle program, CLDe
     ComputeProgramBuildStatus build_status;
     unsafe
     {
+        IntPtr _null = new IntPtr();
         ret_val = CL10.GetProgramBuildInfo(program,
                                            device,
                                            ComputeProgramBuildInfo.Status,
                                            new IntPtr(sizeof(int)),
-                                           &build_status,
-                                           null);
+                                           new IntPtr(&build_status),
+                                           out _null);
     }
     Debug.Assert(ret_val == 0);
 
     if (build_status != ComputeProgramBuildStatus.Success) {
         char[] build_log;
-        int ret_val_size;
+        IntPtr ret_val_size;
         unsafe
         {
         ret_val = CL10.GetProgramBuildInfo(program,
@@ -368,28 +373,28 @@ ComputeProgramBuildStatus build_opencl_program(out CLProgramHandle program, CLDe
                                            ComputeProgramBuildInfo.BuildLog,
                                            IntPtr.Zero,
                                            IntPtr.Zero,
-                                           &ret_val_size);
+                                           out ret_val_size);
         }
         Debug.Assert(ret_val == 0);
 
-        build_log = new char[ret_val_size+1];
-        IntPtr tmp;
+        build_log = new char[((int)ret_val_size)+1];
         unsafe
         {
+            IntPtr _null = new IntPtr();
             fixed (char* ptr = &build_log[0])
             {
                 CL10.GetProgramBuildInfo(program,
                                          device,
                                          ComputeProgramBuildInfo.BuildLog,
-                                         new IntPtr(ret_val_size),
+                                         ret_val_size,
                                          new IntPtr(ptr),
-                                         out tmp);
+                                         out _null);
             }
         }
         Debug.Assert(ret_val == 0);
 
         // The spec technically does not say whether the build log is zero-terminated, so let's be careful.
-        build_log[ret_val_size] = '\0';
+        build_log[(int)ret_val_size] = '\0';
         Console.Error.Write("Build log:\n{0}\n", new string(build_log));
     }
 
@@ -405,7 +410,7 @@ CLProgramHandle setup_opencl(ref futhark_context ctx,
                              string[] srcs,
                              bool required_types) {
 
-    int error;
+    ComputeErrorCode error;
     CLPlatformHandle platform;
     CLDeviceHandle device;
     int max_group_size;
@@ -425,11 +430,12 @@ CLProgramHandle setup_opencl(ref futhark_context ctx,
         int supported;
         unsafe
         {
+            IntPtr throwaway0 = new IntPtr();
             OPENCL_SUCCEED(CL10.GetDeviceInfo(device,
                                               ComputeDeviceInfo.PreferredVectorWidthDouble,
-                                              new IntPtr(sizeof(int)),
-                                              &supported,
-                                              null));
+                                              new IntPtr(sizeof(IntPtr)),
+                                              new IntPtr(&supported),
+                                              out throwaway0));
         }
         if (supported == 0) {
             panic(1,
@@ -440,11 +446,12 @@ CLProgramHandle setup_opencl(ref futhark_context ctx,
 
     unsafe
     {
+        IntPtr throwaway1 = new IntPtr();
         OPENCL_SUCCEED(CL10.GetDeviceInfo(device,
                                           ComputeDeviceInfo.MaxWorkGroupSize,
-                                          new IntPtr(sizeof(int)),
-                                          &max_group_size,
-                                          null));
+                                          new IntPtr(sizeof(IntPtr)),
+                                          new IntPtr(&max_group_size),
+                                          out throwaway1));
     }
 
     int max_tile_size = (int) Math.Sqrt(max_group_size);
@@ -472,6 +479,7 @@ CLProgramHandle setup_opencl(ref futhark_context ctx,
         int size_value = ctx.opencl.cfg.size_values[i];
         string size_name = ctx.opencl.cfg.size_names[i];
         int max_value, default_value;
+        max_value = default_value = 0;
         if (size_class == "group_size") {
             max_value = max_group_size;
             default_value = ctx.opencl.cfg.default_group_size;
@@ -502,7 +510,8 @@ CLProgramHandle setup_opencl(ref futhark_context ctx,
         IntPtr.Zero
     };
     // Note that nVidia's OpenCL requires the platform property
-    ctx.opencl.context = CL10.CreateContext(properties, 1, new []{device}, null, null, out error);
+    IntPtr _null;
+    ctx.opencl.context = CL10.CreateContext(properties, 1, new []{device}, null, ctx.NULL, out error);
     Debug.Assert(error == 0);
 
     ctx.opencl.queue = CL10.CreateCommandQueue(ctx.opencl.context, device, 0, out error);
@@ -538,7 +547,7 @@ CLProgramHandle setup_opencl(ref futhark_context ctx,
 
     unsafe
     {
-        prog = CL10.CreateProgramWithSource(ctx.opencl.context, 1, src_ptr, src_size, &error);
+        prog = CL10.CreateProgramWithSource(ctx.opencl.context, 1, src_ptr, src_size, out error);
     }
     Debug.Assert(error == 0);
 
@@ -554,8 +563,17 @@ CLProgramHandle setup_opencl(ref futhark_context ctx,
                                       ctx.opencl.cfg.size_values[i]);
     }
 
-    OPENCL_SUCCEED(build_opencl_program(out prog, device, compile_opts));
+    OPENCL_SUCCEED(build_opencl_program(ref prog, device, compile_opts));
 
     return prog;
 }
 
+CLMemoryHandle empty_mem_handle(CLContextHandle context)
+{
+    ComputeErrorCode tmp;
+    var cl_mem = CL10.CreateBuffer(context, ComputeMemoryFlags.ReadWrite,
+                                   IntPtr.Zero, IntPtr.Zero,
+                                   out tmp);
+    return cl_mem;
+
+}

@@ -7,6 +7,9 @@ module Futhark.CodeGen.Backends.GenericCSharp
   , Constructor (..)
   , emptyConstructor
 
+  , assignScalarPointer
+  , assignArrayPointer
+  , toIntPtr
   , compileName
   , compileDim
   , compileExp
@@ -269,8 +272,10 @@ compileOutput = nameFun &&& typeFun
         typeFun = compileType . paramType
 
 getDefaultDecl :: Imp.Param -> CSStmt
-getDefaultDecl (Imp.MemParam v _) =
+getDefaultDecl (Imp.MemParam v DefaultSpace) =
   Assign (Var $ compileName v) $ simpleCall "allocateMem" [Integer 0]
+getDefaultDecl (Imp.MemParam v _) =
+  AssignTyped (CustomT "CLMemoryHandle") (Var $ compileName v) (Just $ Var "ctx.EMPTY_MEM_HANDLE")
 getDefaultDecl (Imp.ScalarParam v Cert) =
   Assign (Var $ compileName v) $ Bool True
 getDefaultDecl (Imp.ScalarParam v t) =
@@ -445,9 +450,11 @@ compileFunc (fname, Imp.Function _ outputs inputs body _ _) = do
   let outputDecls = map getDefaultDecl outputs
   let (ret, retType) = unzip outputs'
   let retType' = tupleOrSingleT retType
-  let ret' = Return $ tupleOrSingle ret
+  let ret' = [Return $ tupleOrSingle ret]
 
-  return $ Def (futharkFun . nameToString $ fname) retType' inputs' (outputDecls++body'++[ret'])
+  case outputs of
+    [] -> return $ Def (futharkFun . nameToString $ fname) VoidT inputs' (outputDecls++body')
+    _ -> return $ Def (futharkFun . nameToString $ fname) retType' inputs' (outputDecls++body'++ret')
 
 
 compileTypedInput :: Imp.Param -> (CSType, String)
@@ -462,6 +469,14 @@ tupleOrSingle es = Tuple es
 tupleOrSingleT :: [CSType] -> CSType
 tupleOrSingleT [e] = e
 tupleOrSingleT es = Composite $ TupleT es
+
+assignArrayPointer :: CSExp -> CSExp -> CSStmt
+assignArrayPointer e ptr =
+  AssignTyped (PointerT VoidT) ptr (Just $ Addr $ Index e (IdxExp $ Integer 0))
+
+assignScalarPointer :: CSExp -> CSExp -> CSStmt
+assignScalarPointer e ptr =
+  AssignTyped (PointerT VoidT) ptr (Just $ Addr e)
 
 -- | A 'Call' where the function is a variable and every argument is a
 -- simple 'Arg'.
@@ -489,7 +504,7 @@ compileName = zEncodeString . pretty
 
 compileType :: Imp.Type -> CSType
 compileType (Imp.Scalar p) = compilePrimTypeToAST p
-compileType (Imp.Mem _ space) = MemoryT $ compileSpace space
+compileType (Imp.Mem _ space) = rawMemCSType space
 
 compileSpace :: Imp.Space -> String
 compileSpace _ = "placehodler"
@@ -601,6 +616,7 @@ entryPointInput (i, Imp.TransparentValue (Imp.ArrayValue mem memsize Imp.Default
   stm $ Assign dest unwrap_call
 
 entryPointInput (_, Imp.TransparentValue (Imp.ArrayValue mem memsize (Imp.Space sid) bt ept dims), e) = do
+  stm $ Comment "supper" []
   unpack_input <- asks envEntryInput
   unpack <- collect $ unpack_input mem memsize sid bt ept dims e
   stms unpack
@@ -759,9 +775,6 @@ printValue = fmap concat . mapM (uncurry printValue')
   where printValue' (Imp.OpaqueValue desc _) _ =
           return [Exp $ simpleCall "Console.Write"
                   [String $ "#<opaque " ++ desc ++ ">"]]
-        printValue' (Imp.TransparentValue (Imp.ArrayValue mem memsize (Space _) bt ept shape)) e =
-          printValue' (Imp.TransparentValue (Imp.ArrayValue mem memsize DefaultSpace bt ept shape)) $
-          simpleCall (pretty e ++ ".ForEach") [Var "Console.Write"]
         printValue' (Imp.TransparentValue r) e = do
           p <- printStm r e
           return [p, Exp $ simpleCall "Console.Write" [String "\n"]]
@@ -1138,8 +1151,8 @@ compileCode (Imp.SetScalar vname exp1) = do
   exp1' <- compileExp exp1
   stm $ Reassign name' exp1'
 
-compileCode (Imp.DeclareMem v _) =
-  stm $ AssignTyped (Composite $ ArrayT $ Primitive ByteT) (Var $ compileName v) Nothing
+compileCode (Imp.DeclareMem v space) = declMem v space
+
 compileCode (Imp.DeclareScalar v Cert) =
   stm $ Assign (Var $ compileName v) $ Bool True
 compileCode (Imp.DeclareScalar v t) =
@@ -1236,3 +1249,19 @@ compileCode Imp.Skip = return ()
 -- | Public names must have a consitent prefix.
 publicName :: String -> String
 publicName s = "futhark_" ++ s
+
+declMem :: VName -> Space -> CompilerM op s ()
+declMem name DefaultSpace =
+  stm $ AssignTyped (Composite $ ArrayT $ Primitive ByteT) (Var $ compileName name) Nothing
+declMem name (Space _) =
+  stm $ AssignTyped (CustomT "CLMemoryHandle") (Var $ compileName name) (Just $ Var "ctx.EMPTY_MEM_HANDLE")
+
+memToCSType :: Space -> CompilerM op s CSType
+memToCSType = return . rawMemCSType
+
+rawMemCSType :: Space -> CSType
+rawMemCSType DefaultSpace = Composite $ ArrayT $ Primitive ByteT
+rawMemCSType (Space _) = CustomT "CLMemoryHandle"
+
+toIntPtr :: CSExp -> CSExp
+toIntPtr e = simpleInitClass "IntPtr" [e]
